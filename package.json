@@ -1,7 +1,7 @@
 {
-  "name": "ai-pair",
+  "name": "duet",
   "version": "0.1.0",
-  "description": "Claude(구현) × Codex(리뷰) 자동 페어 프로그래밍 로컬 서버",
+  "description": "Duet — Claude(구현) × Codex(리뷰) 자동 페어 프로그래밍 로컬 서버",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

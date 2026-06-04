@@ -1,4 +1,4 @@
-# ai-pair — Claude × Codex 자동 페어 프로그래밍
+# Duet — Claude × Codex 자동 페어 프로그래밍
 
 로컬 서버를 띄우고 요구사항을 던지면, **Claude가 구현하고 Codex가 리뷰**하는 루프가
 Codex의 **추가 요구사항이 없어질 때까지(`VERDICT: APPROVED`)** 자동으로 반복됩니다.
@@ -60,7 +60,7 @@ node server.js
 | 변수 | 기본값 | 설명 |
 |------|--------|------|
 | `PORT` | `4646` | 서버 포트 |
-| `AI_PAIR_STEP_TIMEOUT_MS` | `1800000` (30분) | AI 1회 호출 시간 제한 |
+| `DUET_STEP_TIMEOUT_MS` | `1800000` (30분) | AI 1회 호출 시간 제한 |
 
 ## 주의
 

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AI·PAIR — Claude × Codex</title>
+<title>DUET — Claude × Codex</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;600;700&family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
@@ -308,7 +308,7 @@
 </head>
 <body>
 <header>
-  <div class="logo"><span class="c1">CLAUDE</span><span class="x">×</span><span class="c2">CODEX</span><span class="cursor"></span></div>
+  <div class="logo">DUET<span class="x">—</span><span class="c1">CLAUDE</span><span class="x">×</span><span class="c2">CODEX</span><span class="cursor"></span></div>
   <div class="srv"><span class="led" id="led"></span><span id="srvtext">IDLE</span></div>
 </header>
 <main>
@@ -371,7 +371,7 @@
     </div>
     <div class="log" id="log">
       <div class="nolog">
-        <div class="big">AI · PAIR</div>
+        <div class="big">DUET</div>
         <div>좌측에서 작업을 선택하거나 새 작업을 시작하세요</div>
       </div>
     </div>
@@ -710,7 +710,7 @@ $('fs-mk').onclick = async () => {
 
 /* ───── 보기 모드: 대화(기본) / 전체 ───── */
 function setView(mode) {
-  try { localStorage.setItem('aipair-view', mode); } catch { /* 사생활 모드 등 */ }
+  try { localStorage.setItem('duet-view', mode); } catch { /* 사생활 모드 등 */ }
   $('log').classList.toggle('chat', mode === 'chat');
   for (const b of $('lh-view').querySelectorAll('button')) {
     b.classList.toggle('on', b.dataset.mode === mode);
@@ -720,7 +720,7 @@ function setView(mode) {
 }
 $('lh-view').onclick = (e) => { if (e.target.dataset.mode) setView(e.target.dataset.mode); };
 let savedView = 'chat';
-try { savedView = localStorage.getItem('aipair-view') || 'chat'; } catch { /* ignore */ }
+try { savedView = localStorage.getItem('duet-view') || 'chat'; } catch { /* ignore */ }
 setView(savedView);
 
 refresh();

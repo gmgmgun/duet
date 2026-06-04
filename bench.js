@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 /**
- * ai-pair 벤치 하니스 — single(단일 루프) vs micro(마이크로 이터레이션) A/B 비교
+ * Duet 벤치 하니스 — single(단일 루프) vs micro(마이크로 이터레이션) A/B 비교
  *
  * 동일한 요구사항을 양쪽 모드로 실행하고, runs/<id>/{meta.json,log.jsonl}에서
  * wall-clock·반복수·스텝수·Claude 호출수/비용·Codex 토큰을 집계해 표로 출력한다.
@@ -22,7 +22,7 @@ const path = require('path');
 const os = require('os');
 
 const RUNS_DIR = path.join(__dirname, 'runs');
-const WORK_BASE = path.join(os.tmpdir(), 'ai-pair-bench');
+const WORK_BASE = path.join(os.tmpdir(), 'duet-bench');
 const DONE = ['approved', 'max_iterations', 'stopped', 'error', 'interrupted'];
 
 /* ──────────────────────────── 인자 파싱 ──────────────────────────── */
@@ -43,7 +43,7 @@ const MODES = (args.modes ? String(args.modes) : 'single,micro').split(',').map(
 /* ──────────────────────────── 테스트 케이스 ──────────────────────────── */
 
 const CASES = {
-  small: { key: 'small', req: "이 폴더에 hello.py를 만들어 실행하면 'Hello, AI-Pair'를 출력하게 해라." },
+  small: { key: 'small', req: "이 폴더에 hello.py를 만들어 실행하면 'Hello, Duet'를 출력하게 해라." },
   medium: { key: 'medium', req: '이 폴더에 add/list/done 세 기능을 가진 할 일 관리 CLI를 파이썬으로 만들어라. 데이터는 같은 폴더의 JSON 파일에 저장하고, 잘못된 입력도 안전하게 처리할 것.' },
   large: { key: 'large', req: '이 폴더에 Node 내장 http만으로 메모 REST API를 만들어라. 엔드포인트: 메모 생성(POST)/목록(GET)/삭제(DELETE), 인메모리 저장, 입력 검증, 그리고 핵심 동작을 검증하는 간단한 테스트 스크립트 포함.' },
 };

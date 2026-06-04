@@ -1,6 +1,6 @@
 'use strict';
 /**
- * ai-pair 오케스트레이션 로직
+ * Duet 오케스트레이션 로직
  *
  * 작업(Task) 상태 관리, CLI 바이너리 탐색, 자식 프로세스 실행,
  * Claude(구현)·Codex(리뷰) 호출, 반복 루프(runTask)와 대기열(queue)을 담당합니다.
@@ -20,13 +20,13 @@ const {
 
 const ROOT = __dirname;
 const RUNS_DIR = path.join(ROOT, 'runs');
-const STEP_TIMEOUT_MS = Number(process.env.AI_PAIR_STEP_TIMEOUT_MS || 30 * 60 * 1000); // AI 1회 호출 제한
+const STEP_TIMEOUT_MS = Number(process.env.DUET_STEP_TIMEOUT_MS || 30 * 60 * 1000); // AI 1회 호출 제한
 const DEFAULT_MAX_ITERATIONS = 8; // micro: 스텝당 최대 구현-리뷰 횟수 / single: 최대 반복
 const MAX_TOTAL_STEPS = 30; // plan 폭주 방지: 전체 스텝 수 상한
 const MODES = ['micro', 'single'];
 // 벤치 결과(2026-06): single이 수렴 가능한 규모에선 시간·비용 모두 우세 → 기본값 single.
 // micro는 single이 수렴 못하는 큰 작업용 보험으로 작업별 선택.
-const DEFAULT_MODE = MODES.includes(process.env.AI_PAIR_MODE) ? process.env.AI_PAIR_MODE : 'single';
+const DEFAULT_MODE = MODES.includes(process.env.DUET_MODE) ? process.env.DUET_MODE : 'single';
 
 fs.mkdirSync(RUNS_DIR, { recursive: true });
 

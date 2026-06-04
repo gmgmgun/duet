@@ -1,6 +1,6 @@
 'use strict';
 /**
- * ai-pair 프롬프트 템플릿
+ * Duet 프롬프트 템플릿
  *
  * Claude(구현자)와 Codex(리뷰어)에게 전달되는 프롬프트 문자열을 생성합니다.
  * 오케스트레이션 로직(orchestrator.js)에서 사용합니다.

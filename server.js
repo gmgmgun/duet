@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * ai-pair — Claude(구현) ↔ Codex(리뷰) 자동 페어 프로그래밍 오케스트레이터
+ * Duet — Claude(구현) ↔ Codex(리뷰) 자동 페어 프로그래밍 오케스트레이터
  *
  * Claude가 요구사항을 구현하고 Codex가 리뷰합니다.
  * Codex가 "VERDICT: APPROVED"를 낼 때까지(= 추가 요구사항이 없을 때까지) 반복합니다.
@@ -185,7 +185,7 @@ const server = http.createServer(async (req, res) => {
 
 restoreRuns();
 server.listen(PORT, HOST, () => {
-  console.log(`ai-pair 서버 실행 중 → http://${HOST}:${PORT}`);
+  console.log(`Duet 서버 실행 중 → http://${HOST}:${PORT}`);
   console.log(`  Claude: ${CLAUDE.cmd}`);
   console.log(`  Codex : ${CODEX.baseArgs[0] || CODEX.cmd}`);
 });
