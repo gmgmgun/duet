@@ -1,0 +1,186 @@
+'use strict';
+/**
+ * ai-pair 프롬프트 템플릿
+ *
+ * Claude(구현자)와 Codex(리뷰어)에게 전달되는 프롬프트 문자열을 생성합니다.
+ * 오케스트레이션 로직(orchestrator.js)에서 사용합니다.
+ *
+ * 마이크로 이터레이션 구조:
+ *  - planPrompt: 요구사항을 작은 스텝으로 분해 (PLAN_JSON 마커로 출력)
+ *  - implementStepPrompt / reviseStepPrompt: 한 번에 한 스텝만 구현/수정
+ *  - reviewStepPrompt: 해당 스텝만 리뷰 (VERDICT 형식 유지)
+ * plan이 단일 스텝이면 사실상 기존(전체 한 덩어리) 동작과 같아집니다.
+ */
+
+/* ──────────────────────────── 분해(Plan) ──────────────────────────── */
+
+function planPrompt(t) {
+  return `You are CLAUDE, the implementer in an automated pair-programming loop. Before writing any code, break the requirement below into a short ordered list of small, independently verifiable steps. Your partner CODEX will review your work one step at a time.
+
+Task requirement:
+<requirement>
+${t.requirement}
+</requirement>
+
+Guidelines for the plan:
+- Each step should be a small, self-contained unit that can be implemented and reviewed on its own (think "one small commit").
+- Order steps so each builds on the previous ones.
+- Match the plan size to the requirement size. If the requirement is trivial (a single small file, a one-liner, a tiny fix), output exactly ONE step — do not pad the plan. For substantial work prefer 3–8 steps. Do NOT over-split into trivial steps, and do NOT lump everything into one giant step.
+- Do NOT implement anything yet — only produce the plan.
+
+End your message with EXACTLY this marker on its own line, followed by a JSON array of steps:
+PLAN_JSON:
+[{"title": "short imperative description of step 1"}, {"title": "step 2"}]
+
+Write the step titles in the same language as the requirement.`;
+}
+
+/* ──────────────────────────── 구현(Implement) ──────────────────────────── */
+
+function stepHeader(t, step, plan, stepIndex, total) {
+  const list = plan
+    .map((s, i) => {
+      const mark = i < stepIndex ? '[done]' : i === stepIndex ? '[NOW]' : '[todo]';
+      return `  ${i + 1}. ${mark} ${s.title}`;
+    })
+    .join('\n');
+  return `Task requirement (overall goal, for context):
+<requirement>
+${t.requirement}
+</requirement>
+
+Full plan (${total} steps):
+${list}
+
+You are working on step ${stepIndex + 1}/${total}: "${step.title}"
+Steps marked [done] are already implemented and approved — do not redo them, but you may build on them.`;
+}
+
+const PLAN_UPDATE_NOTE = `If — and only if — you discover the remaining plan needs to change (a step should be added, removed, split, or reworded), append at the very end of your message EXACTLY this marker on its own line followed by a JSON array of the REMAINING steps (everything AFTER the current one):
+PLAN_UPDATE:
+[{"title": "..."}]
+Omit the marker entirely if the remaining plan is fine.`;
+
+function implementStepPrompt(t, step, plan, stepIndex, total) {
+  return `You are CLAUDE, the implementer in an automated pair-programming loop. CODEX will review this step after you finish.
+
+${stepHeader(t, step, plan, stepIndex, total)}
+
+Implement ONLY this step in the current working directory. Write real, working code — create files, run commands, and verify your work where possible. Do not jump ahead to later steps.
+
+When you are done, end with a concise summary of WHAT you implemented for this step, WHICH files you touched, and HOW to run/verify it.
+${PLAN_UPDATE_NOTE}
+Respond in the same language as the requirement.`;
+}
+
+function reviseStepPrompt(t, step, feedback, stepIndex, total, plan) {
+  return `CODEX reviewed step ${stepIndex + 1}/${total} ("${step.title}") and requests changes. Address EVERY point below, then re-verify your work for this step.
+
+Reviewer feedback:
+<feedback>
+${feedback}
+</feedback>
+
+(Overall requirement, for reference: ${t.requirement})
+
+Stay focused on the current step only. When done, end with a concise summary of the changes you made in response to each point.
+${PLAN_UPDATE_NOTE}
+Respond in the same language as the requirement.`;
+}
+
+/* ──────────────────────────── 리뷰(Review) ──────────────────────────── */
+
+function reviewStepPrompt(t, step, report, plan, stepIndex, total, iteration) {
+  return `You are CODEX, the code reviewer in an automated pair-programming loop. CLAUDE (the implementer) just finished attempt ${iteration} on step ${stepIndex + 1}/${total} of the plan.
+
+Overall requirement (for context only):
+<requirement>
+${t.requirement}
+</requirement>
+
+The step you are reviewing NOW: "${step.title}"
+Review ONLY whether THIS step is correctly and completely implemented. Do not demand work that belongs to later steps of the plan; later steps will be reviewed separately. Earlier steps were already approved.
+
+Implementer's report for this step:
+<report>
+${report}
+</report>
+
+Do NOT trust the report — inspect the actual files in the working directory and verify that this step is fully and correctly implemented, and that the code quality is acceptable (correctness first; style nitpicks only if serious).
+${t.codexSandbox && t.codexSandbox !== 'read-only'
+    ? 'You have permission to execute commands — actually RUN the code/tests to verify the claimed behavior before giving your verdict.'
+    : 'Your sandbox is read-only: verify by reading the code (running it may be blocked by policy — do not treat blocked commands as implementation failures).'}
+
+Your final message MUST start with exactly one of these lines:
+VERDICT: APPROVED
+VERDICT: CHANGES_REQUESTED
+
+If CHANGES_REQUESTED, follow the verdict line with a concrete, numbered list of issues for THIS step, each actionable for the implementer. Only approve when you have NO further requirements for this step. Respond in the same language as the requirement.`;
+}
+
+/* ──────────────────────────── 단일 루프(single 모드) ────────────────────────────
+   요구사항 전체를 한 덩어리로 구현·리뷰하는 기존 방식. 마이크로 이터레이션과의
+   A/B 성능 비교(bench.js)를 위해 보존한다. */
+
+function implementPrompt(t) {
+  return `You are CLAUDE, the implementer in an automated pair-programming loop. Your partner CODEX will review your work after you finish.
+
+Task requirement:
+<requirement>
+${t.requirement}
+</requirement>
+
+Implement this requirement in the current working directory. Write real, working code — create files, run commands, and verify your work where possible.
+
+When you are done, end with a concise summary of WHAT you implemented, WHICH files you touched, and HOW to run/verify it. Respond in the same language as the requirement.`;
+}
+
+function revisePrompt(t, feedback) {
+  return `CODEX reviewed your implementation and requests changes. Address EVERY point below, then re-verify your work.
+
+Reviewer feedback:
+<feedback>
+${feedback}
+</feedback>
+
+(Original requirement, for reference: ${t.requirement})
+
+When done, end with a concise summary of the changes you made in response to each point. Respond in the same language as the requirement.`;
+}
+
+function reviewPrompt(t, report, iteration) {
+  return `You are CODEX, the code reviewer in an automated pair-programming loop. CLAUDE (the implementer) just finished iteration ${iteration} of ${t.maxIterations}.
+
+Task requirement:
+<requirement>
+${t.requirement}
+</requirement>
+
+Implementer's report:
+<report>
+${report}
+</report>
+
+Do NOT trust the report — inspect the actual files in the working directory and verify that the requirement is fully and correctly implemented, and that the code quality is acceptable (correctness first; style nitpicks only if serious).
+${t.codexSandbox && t.codexSandbox !== 'read-only'
+    ? 'You have permission to execute commands — actually RUN the code/tests to verify the claimed behavior before giving your verdict.'
+    : 'Your sandbox is read-only: verify by reading the code (running it may be blocked by policy — do not treat blocked commands as implementation failures).'}
+
+Your final message MUST start with exactly one of these lines:
+VERDICT: APPROVED
+VERDICT: CHANGES_REQUESTED
+
+If CHANGES_REQUESTED, follow the verdict line with a concrete, numbered list of issues or missing requirements, each actionable for the implementer. Only approve when you have NO further requirements. Respond in the same language as the requirement.`;
+}
+
+module.exports = {
+  // 마이크로 이터레이션 (micro 모드)
+  planPrompt,
+  implementStepPrompt,
+  reviseStepPrompt,
+  reviewStepPrompt,
+  // 단일 루프 (single 모드)
+  implementPrompt,
+  revisePrompt,
+  reviewPrompt,
+};

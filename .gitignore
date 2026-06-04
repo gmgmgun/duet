@@ -1,0 +1,9 @@
+# 실행 기록 (작업별 로그/리뷰 — 로컬 전용)
+runs/
+
+# Node
+node_modules/
+
+# OS
+Thumbs.db
+.DS_Store

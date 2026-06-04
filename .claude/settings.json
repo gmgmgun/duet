@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(./runs/**)",
+      "Edit(./runs/**)"
+    ]
+  }
+}
