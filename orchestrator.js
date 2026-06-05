@@ -87,6 +87,11 @@ function taskSummary(t) {
     // 마이크로 이터레이션: 분해된 스텝 진행 상황 (옛 작업은 plan 없음 → 빈 배열)
     steps: Array.isArray(t.plan) ? t.plan.map((s) => ({ title: s.title, status: s.status })) : [],
     currentStep: t.currentStep || 0,
+    // 이어가기(후속 작업): 부모 작업과 Claude 세션. 세션은 meta로 영속화되어
+    // 서버 재시작 후에도 --resume으로 맥락을 이어갈 수 있다.
+    parentId: t.parentId || null,
+    parentRequirement: t.parentRequirement || null,
+    claudeSessionId: t.claudeSessionId || null,
     createdAt: t.createdAt,
     finishedAt: t.finishedAt || null,
   };
@@ -193,6 +198,28 @@ function compactToolInput(name, input) {
 }
 
 async function runClaude(t, prompt) {
+  try {
+    const r = await runClaudeAttempt(t, prompt);
+    if (r != null) t.claudeOk = true;
+    return r;
+  } catch (err) {
+    // 이어받은 세션이 첫 호출부터 실패하면(만료·삭제 등) 세션 없이 한 번만 재시도.
+    // 이미 성공한 적이 있는 세션의 실패는 일반 오류로 그대로 전파한다.
+    if (!t.stopRequested && t.inheritedSession && !t.claudeOk) {
+      emit(t, 'system', 'info',
+        `이어받은 Claude 세션을 재개하지 못했습니다 — 새 세션으로 재시도합니다. (${String(err.message).slice(0, 200)})`);
+      t.claudeSessionId = null;
+      t.inheritedSession = false;
+      saveMeta(t);
+      const r = await runClaudeAttempt(t, prompt);
+      if (r != null) t.claudeOk = true;
+      return r;
+    }
+    throw err;
+  }
+}
+
+async function runClaudeAttempt(t, prompt) {
   const args = ['-p', '--output-format', 'stream-json', '--verbose', '--dangerously-skip-permissions'];
   if (t.claudeSessionId) args.push('--resume', t.claudeSessionId);
 
@@ -502,8 +529,9 @@ function pump() {
 /**
  * 새 작업을 생성해 대기열에 넣고 펌프를 가동한다.
  * 입력값 검증은 호출자(HTTP 서버)가 담당한다.
+ * parent가 있으면 후속 작업: 부모의 Claude 세션을 물려받아 맥락을 이어간다.
  */
-function enqueueTask({ requirement, cwd, maxIterations, codexSandbox, mode }) {
+function enqueueTask({ requirement, cwd, maxIterations, codexSandbox, mode, parent }) {
   const id = newId();
   const t = {
     id, requirement, cwd, maxIterations, // maxIterations = 스텝당 최대 구현-리뷰 횟수
@@ -514,7 +542,13 @@ function enqueueTask({ requirement, cwd, maxIterations, codexSandbox, mode }) {
     createdAt: Date.now(), finishedAt: null,
     dir: path.join(RUNS_DIR, id),
     events: [], subscribers: new Set(),
-    proc: null, stopRequested: false, claudeSessionId: null,
+    proc: null, stopRequested: false,
+    // 이어가기: 부모 작업의 세션·요구사항 상속
+    parentId: parent ? parent.id : null,
+    parentRequirement: parent ? parent.requirement : null,
+    claudeSessionId: parent ? parent.claudeSessionId || null : null,
+    inheritedSession: !!(parent && parent.claudeSessionId),
+    claudeOk: false,
   };
   fs.mkdirSync(t.dir, { recursive: true });
   saveMeta(t);

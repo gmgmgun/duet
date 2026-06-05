@@ -23,7 +23,40 @@ node server.js
 # → http://127.0.0.1:4646 접속
 ```
 
-의존성 없음 (Node 내장 모듈만 사용). `claude` / `codex` CLI가 설치·로그인되어 있어야 합니다.
+서버는 의존성 없음 (Node 내장 모듈만 사용). `claude` / `codex` CLI가 설치·로그인되어 있어야 합니다.
+대시보드 빌드 산출물(`public/`)이 저장소에 포함되어 있어 클론 후 바로 실행 가능합니다.
+
+## 프론트엔드 개발 (React + TypeScript + Tailwind)
+
+대시보드 소스는 `web/`에 있습니다 (Vite + React 19 + Tailwind v4).
+
+```powershell
+npm --prefix web install   # 최초 1회
+npm run dev                # Vite 개발 서버 (http://localhost:5173, /api는 4646으로 프록시)
+npm run build              # 타입 체크 + 빌드 → public/ 으로 출력
+```
+
+개발 시에는 `node server.js`(API)와 `npm run dev`(프론트)를 함께 띄웁니다.
+
+```
+web/src/
+├── App.tsx                # 레이아웃 + 선택/뷰 상태
+├── api.ts                 # REST 클라이언트
+├── markdown.ts            # 경량 마크다운 렌더러 (의존성 없음, XSS-safe)
+├── types.ts               # 서버 taskSummary()/emit()과 1:1 타입
+├── hooks/
+│   ├── useTasks.ts        # 작업 목록 폴링 + SSE status 병합
+│   └── useTaskEvents.ts   # 선택된 작업 SSE 구독
+└── components/
+    ├── Header.tsx         # 상단 바 (로고, 서버 상태 LED)
+    ├── TaskForm.tsx       # 새 작업 폼
+    ├── TaskList.tsx       # 작업 목록
+    ├── LogPane.tsx        # 로그 헤더 + 스트림 (자동 스크롤)
+    ├── LogEntry.tsx       # 이벤트 1건 렌더링 (kind/role별 스타일)
+    ├── FsModal.tsx        # 폴더 탐색 모달
+    ├── Stepper.tsx        # 숫자 스테퍼
+    └── Badge.tsx          # 상태 배지
+```
 
 ## 사용법
 

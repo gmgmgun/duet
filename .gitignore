@@ -4,6 +4,11 @@ runs/
 # Node
 node_modules/
 
+# Vite
+web/dist/
+web/tsconfig.tsbuildinfo
+*.local
+
 # OS
 Thumbs.db
 .DS_Store

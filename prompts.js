@@ -12,12 +12,39 @@
  * plan이 단일 스텝이면 사실상 기존(전체 한 덩어리) 동작과 같아집니다.
  */
 
+/* ──────────────────────────── 후속 작업(이어가기) 컨텍스트 ──────────────────────────── */
+
+/** 구현자(Claude)용: 이전 작업 위에 이어서 작업함을 알린다. 후속 작업이 아니면 빈 문자열. */
+function followupImplementNote(t) {
+  if (!t.parentId) return '';
+  const sessionNote = t.claudeSessionId
+    ? ' This conversation is resumed from that task, so you may remember the details.'
+    : '';
+  return `This is a FOLLOW-UP task: you previously completed work in this same working directory.${sessionNote}
+Previous task requirement:
+<previous_requirement>
+${t.parentRequirement || '(unknown)'}
+</previous_requirement>
+
+The codebase already contains that work. Build on the existing code — do not start from scratch and do not break existing behavior.
+
+`;
+}
+
+/** 리뷰어(Codex)용: 기존 코드는 이미 승인된 컨텍스트임을 알린다. 후속 작업이 아니면 빈 문자열. */
+function followupReviewNote(t) {
+  if (!t.parentId) return '';
+  return `Note: this requirement is a FOLLOW-UP to earlier work already completed and approved in this directory (previous requirement: "${t.parentRequirement || '(unknown)'}"). Review the implementation of the NEW requirement; treat pre-existing code as accepted context unless the new changes break it.
+
+`;
+}
+
 /* ──────────────────────────── 분해(Plan) ──────────────────────────── */
 
 function planPrompt(t) {
   return `You are CLAUDE, the implementer in an automated pair-programming loop. Before writing any code, break the requirement below into a short ordered list of small, independently verifiable steps. Your partner CODEX will review your work one step at a time.
 
-Task requirement:
+${followupImplementNote(t)}Task requirement:
 <requirement>
 ${t.requirement}
 </requirement>
@@ -98,7 +125,7 @@ Overall requirement (for context only):
 ${t.requirement}
 </requirement>
 
-The step you are reviewing NOW: "${step.title}"
+${followupReviewNote(t)}The step you are reviewing NOW: "${step.title}"
 Review ONLY whether THIS step is correctly and completely implemented. Do not demand work that belongs to later steps of the plan; later steps will be reviewed separately. Earlier steps were already approved.
 
 Implementer's report for this step:
@@ -125,7 +152,7 @@ If CHANGES_REQUESTED, follow the verdict line with a concrete, numbered list of 
 function implementPrompt(t) {
   return `You are CLAUDE, the implementer in an automated pair-programming loop. Your partner CODEX will review your work after you finish.
 
-Task requirement:
+${followupImplementNote(t)}Task requirement:
 <requirement>
 ${t.requirement}
 </requirement>
@@ -156,7 +183,7 @@ Task requirement:
 ${t.requirement}
 </requirement>
 
-Implementer's report:
+${followupReviewNote(t)}Implementer's report:
 <report>
 ${report}
 </report>

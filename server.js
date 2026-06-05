@@ -34,8 +34,23 @@ const {
 
 const PORT = Number(process.env.PORT || 4646);
 const HOST = '127.0.0.1';
+const FINISHED_STATUSES = ['approved', 'max_iterations', 'stopped', 'error', 'interrupted'];
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, 'public');
+
+// Vite 빌드 산출물(web/ → public/)을 서빙하기 위한 MIME 매핑
+const MIME = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.map': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.ico': 'image/x-icon',
+  '.woff2': 'font/woff2',
+  '.txt': 'text/plain; charset=utf-8',
+};
 
 /* ──────────────────────────── HTTP 유틸 ──────────────────────────── */
 
@@ -65,10 +80,23 @@ const server = http.createServer(async (req, res) => {
   const p = url.pathname;
 
   try {
-    // 정적 파일
-    if (req.method === 'GET' && (p === '/' || p === '/index.html')) {
-      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-      res.end(fs.readFileSync(path.join(PUBLIC_DIR, 'index.html')));
+    // 정적 파일 — public/ (Vite 빌드 산출물). /api/* 외의 GET 요청을 처리한다.
+    if (req.method === 'GET' && !p.startsWith('/api/')) {
+      const rel = decodeURIComponent(p === '/' ? '/index.html' : p);
+      const file = path.join(PUBLIC_DIR, rel);
+      // 경로 탈출(../) 차단
+      if (path.relative(PUBLIC_DIR, file).startsWith('..')) {
+        return json(res, 403, { error: 'forbidden' });
+      }
+      let data;
+      try {
+        data = fs.readFileSync(file);
+      } catch {
+        return json(res, 404, { error: 'not found' });
+      }
+      const type = MIME[path.extname(file).toLowerCase()] || 'application/octet-stream';
+      res.writeHead(200, { 'Content-Type': type });
+      res.end(data);
       return;
     }
 
@@ -142,7 +170,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     // /api/tasks/:id/...
-    const m = p.match(/^\/api\/tasks\/([^/]+)(?:\/(events|stop))?$/);
+    const m = p.match(/^\/api\/tasks\/([^/]+)(?:\/(events|stop|continue))?$/);
     if (m) {
       const t = tasks.get(m[1]);
       if (!t) return json(res, 404, { error: 'task not found' });
@@ -168,11 +196,37 @@ const server = http.createServer(async (req, res) => {
       }
 
       if (req.method === 'POST' && m[2] === 'stop') {
-        if (['approved', 'max_iterations', 'stopped', 'error', 'interrupted'].includes(t.status)) {
+        if (FINISHED_STATUSES.includes(t.status)) {
           return json(res, 409, { error: '이미 종료된 작업입니다.' });
         }
         stopTask(t);
         json(res, 200, { ok: true });
+        return;
+      }
+
+      // 이어가기: 종료된 작업의 cwd·모드·권한·Claude 세션을 상속한 후속 작업 생성
+      if (req.method === 'POST' && m[2] === 'continue') {
+        if (!FINISHED_STATUSES.includes(t.status)) {
+          return json(res, 409, { error: '진행 중인 작업은 이어갈 수 없습니다. 종료 후 시도하세요.' });
+        }
+        const body = await readBody(req);
+        const requirement = String(body.requirement || '').trim();
+        if (!requirement) return json(res, 400, { error: '요구사항(requirement)을 입력하세요.' });
+        let stat;
+        try { stat = fs.statSync(t.cwd); } catch { /* noop */ }
+        if (!stat || !stat.isDirectory()) {
+          return json(res, 400, { error: `대상 디렉터리가 존재하지 않습니다: ${t.cwd}` });
+        }
+        const nt = enqueueTask({
+          requirement,
+          cwd: t.cwd,
+          maxIterations: Math.max(1, Math.min(30, Number(body.maxIterations) || t.maxIterations || DEFAULT_MAX_ITERATIONS)),
+          codexSandbox: ['read-only', 'workspace-write', 'bypass'].includes(body.codexSandbox)
+            ? body.codexSandbox : (t.codexSandbox || 'bypass'),
+          mode: MODES.includes(body.mode) ? body.mode : (t.mode || DEFAULT_MODE),
+          parent: t,
+        });
+        json(res, 201, taskSummary(nt));
         return;
       }
     }
