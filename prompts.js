@@ -89,12 +89,17 @@ PLAN_UPDATE:
 [{"title": "..."}]
 Omit the marker entirely if the remaining plan is fine.`;
 
+// 구현자가 dev 서버 등을 띄워둔 채 종료하면 stdio 파이프를 물고 있는 고아
+// 프로세스 때문에 오케스트레이터가 다음 단계로 진행하지 못한다(실제 발생).
+const NO_BACKGROUND_NOTE = `IMPORTANT: do NOT leave long-running background processes (dev servers, watchers, etc.) running when you finish — verify what you need, then shut them down BEFORE writing your final summary. Orphaned processes block the automation loop.`;
+
 function implementStepPrompt(t, step, plan, stepIndex, total) {
   return `You are the IMPLEMENTER in an automated pair-programming loop. The REVIEWER will review this step after you finish.
 
 ${stepHeader(t, step, plan, stepIndex, total)}
 
 Implement ONLY this step in the current working directory. Write real, working code — create files, run commands, and verify your work where possible. Do not jump ahead to later steps.
+${NO_BACKGROUND_NOTE}
 
 When you are done, end with a concise summary of WHAT you implemented for this step, WHICH files you touched, and HOW to run/verify it.
 ${PLAN_UPDATE_NOTE}
@@ -111,7 +116,8 @@ ${feedback}
 
 (Overall requirement, for reference: ${t.requirement})
 
-Stay focused on the current step only. When done, end with a concise summary of the changes you made in response to each point.
+Stay focused on the current step only. ${NO_BACKGROUND_NOTE}
+When done, end with a concise summary of the changes you made in response to each point.
 ${PLAN_UPDATE_NOTE}
 Always respond in Korean (한국어), regardless of the language of the requirement.`;
 }
@@ -167,6 +173,7 @@ ${t.requirement}
 </requirement>
 
 Implement this requirement in the current working directory. Write real, working code — create files, run commands, and verify your work where possible.
+${NO_BACKGROUND_NOTE}
 
 When you are done, end with a concise summary of WHAT you implemented, WHICH files you touched, and HOW to run/verify it. Always respond in Korean (한국어), regardless of the language of the requirement.`;
 }
@@ -181,6 +188,7 @@ ${feedback}
 
 (Original requirement, for reference: ${t.requirement})
 
+${NO_BACKGROUND_NOTE}
 When done, end with a concise summary of the changes you made in response to each point. Always respond in Korean (한국어), regardless of the language of the requirement.`;
 }
 
@@ -242,6 +250,7 @@ Reviewer findings:
 ${feedback}
 </feedback>
 
+${NO_BACKGROUND_NOTE}
 When done, end with a concise summary of the changes you made in response to each finding. Always respond in Korean (한국어), regardless of the language of the requirement.`;
 }
 

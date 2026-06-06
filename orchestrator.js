@@ -148,6 +148,20 @@ function runProcess(t, { cmd, args, cwd, prompt, onLine }) {
     const proc = spawn(cmd, args, { cwd, windowsHide: true });
     t.proc = proc;
 
+    // 'close'는 모든 stdio 파이프가 닫혀야 발생한다. AI가 백그라운드 프로세스
+    // (dev 서버 등)를 띄워둔 채 종료하면 손자가 파이프를 상속해 물고 있어
+    // 'close'가 영원히 오지 않는다 — 'exit' 후 유예를 두고 강제로 마무리한다.
+    let settled = false;
+    let exitGrace = null;
+    const settle = (fn) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      clearTimeout(exitGrace);
+      t.proc = null;
+      fn();
+    };
+
     const timer = setTimeout(() => {
       emit(t, 'system', 'error', `시간 초과(${Math.round(STEP_TIMEOUT_MS / 60000)}분) — 프로세스를 종료합니다.`);
       killTree(proc);
@@ -176,14 +190,18 @@ function runProcess(t, { cmd, args, cwd, prompt, onLine }) {
     mkReader(proc.stderr, 'stderr');
 
     proc.on('error', (err) => {
-      clearTimeout(timer);
-      t.proc = null;
-      reject(new Error(`프로세스 실행 실패(${cmd}): ${err.message}`));
+      settle(() => reject(new Error(`프로세스 실행 실패(${cmd}): ${err.message}`)));
     });
     proc.on('close', (code) => {
-      clearTimeout(timer);
-      t.proc = null;
-      resolve({ code, stderrTail });
+      settle(() => resolve({ code, stderrTail }));
+    });
+    proc.on('exit', (code) => {
+      // 프로세스는 종료됐는데 'close'가 안 오는 경우(위 주석)의 안전망:
+      // 3초 안에 'close'가 오지 않으면 파이프를 끊고 종료 코드로 마무리한다.
+      exitGrace = setTimeout(() => {
+        try { proc.stdout.destroy(); proc.stderr.destroy(); } catch { /* ignore */ }
+        settle(() => resolve({ code: code == null ? -1 : code, stderrTail }));
+      }, 3000);
     });
 
     if (prompt != null) {
