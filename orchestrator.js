@@ -227,12 +227,15 @@ async function runClaude(t, prompt) {
 }
 
 /**
- * Claude 1회 실행. useSession=true(구현자)면 작업 세션을 --resume으로 잇고
- * 세션 id를 갱신한다. false(리뷰어)면 매번 새 세션 — 구현자와 컨텍스트를
- * 공유하지 않아야 독립적인 리뷰가 된다.
+ * Claude 1회 실행. role='implementer'면 작업 세션을 --resume으로 잇고
+ * 세션 id를 갱신한다. 'reviewer'면 매번 새 세션(구현자와 컨텍스트를
+ * 공유하지 않아야 독립적인 리뷰가 된다) + 파일 변경 도구를 기계적으로
+ * 차단한다(리뷰어는 고치지 않고 지적만 해야 함 — 프롬프트 지시의 안전망).
  */
-async function runClaudeAttempt(t, prompt, useSession = true) {
+async function runClaudeAttempt(t, prompt, role = 'implementer') {
+  const useSession = role === 'implementer';
   const args = ['-p', '--output-format', 'stream-json', '--verbose', '--dangerously-skip-permissions'];
+  if (role === 'reviewer') args.push('--disallowedTools', 'Write', 'Edit', 'NotebookEdit');
   if (useSession && t.claudeSessionId) args.push('--resume', t.claudeSessionId);
 
   let result = null;
@@ -350,7 +353,7 @@ async function runCodex(t, prompt, iteration, role = 'reviewer') {
    구현자/리뷰어를 작업별로 Claude/Codex 중 선택한다 (동일 엔진 조합 가능).
    - Claude 구현자: 작업 세션을 --resume으로 유지 (반복 간 맥락 보존)
    - Codex 구현자: 호출마다 독립 실행 (프롬프트에 요구사항·피드백 포함, 코드는 디스크에)
-   - Claude 리뷰어: 매번 새 세션 — 구현자와 컨텍스트를 공유하지 않는 독립 리뷰
+   - Claude 리뷰어: 매번 새 세션(독립 리뷰) + Write/Edit 도구 차단(리뷰어는 수정 금지)
    - Codex 리뷰어: 기존 동작 그대로 */
 
 function implLabel(t) { return ENGINE_LABEL[t.implementer] || 'Claude'; }
@@ -363,7 +366,7 @@ function runImplementer(t, prompt, label) {
 
 async function runReviewer(t, prompt, label) {
   if (t.reviewer === 'claude') {
-    const review = await runClaudeAttempt(t, prompt, false);
+    const review = await runClaudeAttempt(t, prompt, 'reviewer');
     if (review != null) {
       // Codex 리뷰어와 동일하게 리뷰 본문을 runs/<id>/review-<label>.md로 영속화
       try { fs.writeFileSync(path.join(t.dir, `review-${label}.md`), review); } catch { /* ignore */ }
