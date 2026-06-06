@@ -128,15 +128,16 @@ export function TaskForm({ onCreated, cwdSuggestions }: TaskFormProps) {
           </select>
         </div>
         <div>
-          <label className={labelCls} title="Codex가 구현/리뷰 역할로 실행될 때의 샌드박스 권한">
-            CODEX 권한
+          <label
+            className={labelCls}
+            title="리뷰어 권한 — Codex: 샌드박스 모드 / Claude: 읽기 전용 선택 시 셸 실행까지 차단 (파일 변경 도구는 항상 차단)"
+          >
+            리뷰어 권한
           </label>
           <select
-            className={`${inputCls} cursor-pointer disabled:opacity-40 disabled:cursor-default`}
+            className={`${inputCls} cursor-pointer`}
             value={codexSandbox}
             onChange={(e) => setCodexSandbox(e.target.value as CodexSandbox)}
-            disabled={implementer !== 'codex' && reviewer !== 'codex'}
-            title={implementer !== 'codex' && reviewer !== 'codex' ? 'Codex를 사용하지 않는 조합에서는 적용되지 않습니다' : undefined}
           >
             <option value="bypass">전체 bypass</option>
             <option value="workspace-write">쓰기 허용</option>

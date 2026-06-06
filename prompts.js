@@ -118,11 +118,11 @@ Respond in the same language as the requirement.`;
 
 /* ──────────────────────────── 리뷰(Review) ──────────────────────────── */
 
-/** 리뷰어 권한에 따른 검증 지침. Claude 리뷰어는 항상 명령 실행 가능,
-    Codex 리뷰어는 작업 제출 시 선택한 샌드박스를 따른다.
-    어느 쪽이든 리뷰어는 파일을 수정하지 않는다 — 고치는 건 구현자의 몫. */
+/** 리뷰어 권한에 따른 검증 지침. 작업 제출 시 선택한 권한 모드가 리뷰어
+    엔진에 공통 적용된다 — read-only면 Codex는 샌드박스로, Claude는 셸 차단으로
+    실행이 막힌다. 어느 쪽이든 리뷰어는 파일을 수정하지 않는다(구현자의 몫). */
 function sandboxNote(t) {
-  const canRun = t.reviewer === 'claude' || (t.codexSandbox && t.codexSandbox !== 'read-only');
+  const canRun = (t.codexSandbox || 'bypass') !== 'read-only';
   return canRun
     ? 'You have permission to execute commands — actually RUN the code/tests to verify the claimed behavior before giving your verdict. However, you must NOT create, modify, or delete any files: you are the reviewer, not the implementer. Report issues in your verdict for the implementer to fix.'
     : 'Your sandbox is read-only: verify by reading the code (running it may be blocked by policy — do not treat blocked commands as implementation failures). Do not attempt to modify any files.';

@@ -9,6 +9,7 @@ export type TaskStatus =
   | 'max_iterations'
   | 'interrupted';
 
+/** 리뷰어 권한 — Codex: 샌드박스 모드, Claude: read-only 선택 시 셸 실행까지 차단 */
 export type CodexSandbox = 'bypass' | 'workspace-write' | 'read-only';
 export type TaskMode = 'single' | 'micro' | 'review';
 /** 역할(구현자/리뷰어)별로 선택하는 AI 엔진 — 동일 엔진 조합도 허용 */

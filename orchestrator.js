@@ -235,7 +235,14 @@ async function runClaude(t, prompt) {
 async function runClaudeAttempt(t, prompt, role = 'implementer') {
   const useSession = role === 'implementer';
   const args = ['-p', '--output-format', 'stream-json', '--verbose', '--dangerously-skip-permissions'];
-  if (role === 'reviewer') args.push('--disallowedTools', 'Write', 'Edit', 'NotebookEdit');
+  if (role === 'reviewer') {
+    // 파일 변경 도구는 항상 차단. 단, 셸(Bash)은 테스트 구동용으로 허용되므로
+    // 셸 경유 변경까지 막지는 못한다(프롬프트로 금지) — 기계적 보장이 필요하면
+    // 리뷰어 권한을 read-only로: 셸 실행 자체를 차단해 읽기 전용 리뷰가 된다.
+    const disallowed = ['Write', 'Edit', 'MultiEdit', 'NotebookEdit'];
+    if (t.codexSandbox === 'read-only') disallowed.push('Bash');
+    args.push('--disallowedTools', ...disallowed);
+  }
   if (useSession && t.claudeSessionId) args.push('--resume', t.claudeSessionId);
 
   let result = null;
