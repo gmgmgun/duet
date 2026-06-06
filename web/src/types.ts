@@ -11,6 +11,8 @@ export type TaskStatus =
 
 export type CodexSandbox = 'bypass' | 'workspace-write' | 'read-only';
 export type TaskMode = 'single' | 'micro' | 'review';
+/** 역할(구현자/리뷰어)별로 선택하는 AI 엔진 — 동일 엔진 조합도 허용 */
+export type Engine = 'claude' | 'codex';
 
 export interface TaskStep {
   title: string;
@@ -24,6 +26,8 @@ export interface Task {
   maxIterations: number;
   codexSandbox: CodexSandbox;
   mode: TaskMode;
+  implementer: Engine;
+  reviewer: Engine;
   status: TaskStatus;
   iteration: number;
   steps: TaskStep[];
@@ -73,6 +77,8 @@ export interface NewTaskInput {
   maxIterations: number;
   codexSandbox: CodexSandbox;
   mode: TaskMode;
+  implementer: Engine;
+  reviewer: Engine;
 }
 
 export type ViewMode = 'chat' | 'full';

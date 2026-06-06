@@ -39,6 +39,9 @@ export function TaskList({ tasks, selected, onSelect }: TaskListProps) {
           <div className="flex gap-[10px] mt-[7px] text-[11.5px] text-dim items-center">
             <Badge status={t.status} />
             <span>{t.mode || 'single'}</span>
+            <span title="구현 AI → 리뷰 AI">
+              {(t.implementer || 'claude') + '→' + (t.reviewer || 'codex')}
+            </span>
             <span>
               iter {t.iteration}/{t.maxIterations}
             </span>

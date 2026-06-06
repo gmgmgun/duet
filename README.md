@@ -69,32 +69,34 @@ web/src/
 
 ## 동작 방식
 
-| 단계 | 명령 | 권한 |
-|------|------|------|
-| 구현 (Claude) | `claude -p --output-format stream-json --dangerously-skip-permissions` | 항상 전체 bypass — 읽기/쓰기/명령 실행 |
-| 리뷰 (Codex) | `codex exec --sandbox <모드> --skip-git-repo-check` | 작업별 선택 (아래 표) |
+구현자와 리뷰어 역할에 어떤 AI를 쓸지 **작업마다 선택**합니다 (기본: Claude 구현 / Codex 리뷰).
+`claude→claude`, `codex→codex` 같은 동일 엔진 조합도 가능합니다.
+
+| 역할 | Claude로 실행 시 | Codex로 실행 시 |
+|------|-----------------|-----------------|
+| 구현 | `claude -p --dangerously-skip-permissions` — 작업 내내 같은 세션을 `--resume`으로 유지 | `codex exec` — 호출마다 독립 실행. 쓰기가 필수인데 Windows 샌드박스는 `workspace-write`도 쓰기를 막으므로 **항상 bypass로 실행** (선택한 권한 모드는 리뷰에만 적용) |
+| 리뷰 | 매번 **새 세션** — 구현자와 컨텍스트를 공유하지 않는 독립 리뷰. 명령 실행 가능 | `codex exec --sandbox <모드>` — 작업별 선택 (아래 표) |
 
 ### 진행 모드 (작업 제출 시 선택)
 
 | 모드 | 흐름 | 용도 |
 |------|------|------|
-| `single` (기본) | Claude 구현 → Codex 리뷰 반복 | 일반 구현 작업 |
-| `micro` | Claude가 계획 수립 → 스텝별 구현·리뷰 | single이 수렴하지 못하는 큰 작업 |
-| `review` | **Codex 리뷰 → Claude 수정** 반복 (역순) | 기존 코드 리뷰/감사. 첫 리뷰에서 지적사항이 없으면 즉시 승인 종료. 최대 반복을 1로 두면 수정 없이 리뷰만 수행 |
+| `single` (기본) | 구현 → 리뷰 반복 | 일반 구현 작업 |
+| `micro` | 구현자가 계획 수립 → 스텝별 구현·리뷰 | single이 수렴하지 못하는 큰 작업 |
+| `review` | **리뷰 → 수정** 반복 (역순) | 기존 코드 리뷰/감사. 첫 리뷰에서 지적사항이 없으면 즉시 승인 종료. 최대 반복을 1로 두면 수정 없이 리뷰만 수행 |
 
-### Codex 권한 모드 (작업 제출 시 선택)
+### Codex 권한 모드 (작업 제출 시 선택, Codex를 쓰는 역할에 적용)
 
 | 모드 | 플래그 | 설명 |
 |------|--------|------|
 | 전체 bypass (기본) | `--dangerously-bypass-approvals-and-sandbox` | 샌드박스·승인 전부 해제. 신뢰하는 폴더에서만 |
 | 쓰기 허용 | `--sandbox workspace-write` | 대상 폴더 안에서 코드/테스트 실행 가능 |
-| 읽기 전용 | `--sandbox read-only` | 코드를 읽어서만 검증. 가장 안전 |
+| 읽기 전용 | `--sandbox read-only` | 코드를 읽어서만 검증. 가장 안전 (구현자 Codex에는 적용되지 않음 — 위 표 참고) |
 
-- Claude는 작업 내내 **같은 세션을 `--resume`으로 이어가서** 이전 맥락을 유지합니다.
-- Codex 리뷰의 첫 줄이 `VERDICT: APPROVED`면 종료, `VERDICT: CHANGES_REQUESTED`면
-  피드백 목록이 Claude에게 그대로 전달되어 다음 반복이 시작됩니다.
-- 모든 실행 기록은 `runs/<task-id>/`에 남습니다 (`log.jsonl`, `meta.json`, `review-N.md`).
-  서버를 재시작해도 과거 기록은 대시보드에서 조회 가능합니다.
+- 리뷰의 첫 줄이 `VERDICT: APPROVED`면 종료, `VERDICT: CHANGES_REQUESTED`면
+  피드백 목록이 구현자에게 그대로 전달되어 다음 반복이 시작됩니다.
+- 모든 실행 기록은 `runs/<task-id>/`에 남습니다 (`log.jsonl`, `meta.json`, `review-N.md`,
+  Codex 구현자일 때 `impl-N.md`). 서버를 재시작해도 과거 기록은 대시보드에서 조회 가능합니다.
 
 ## 설정 (환경 변수)
 

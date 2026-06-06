@@ -2,8 +2,9 @@
 /**
  * Duet 프롬프트 템플릿
  *
- * Claude(구현자)와 Codex(리뷰어)에게 전달되는 프롬프트 문자열을 생성합니다.
- * 오케스트레이션 로직(orchestrator.js)에서 사용합니다.
+ * 구현자(IMPLEMENTER)와 리뷰어(REVIEWER)에게 전달되는 프롬프트 문자열을 생성합니다.
+ * 각 역할은 작업별로 Claude/Codex 중 선택되므로(t.implementer/t.reviewer)
+ * 프롬프트는 엔진명이 아닌 역할명을 사용합니다. 오케스트레이션은 orchestrator.js.
  *
  * 마이크로 이터레이션 구조:
  *  - planPrompt: 요구사항을 작은 스텝으로 분해 (PLAN_JSON 마커로 출력)
@@ -14,7 +15,7 @@
 
 /* ──────────────────────────── 후속 작업(이어가기) 컨텍스트 ──────────────────────────── */
 
-/** 구현자(Claude)용: 이전 작업 위에 이어서 작업함을 알린다. 후속 작업이 아니면 빈 문자열. */
+/** 구현자용: 이전 작업 위에 이어서 작업함을 알린다. 후속 작업이 아니면 빈 문자열. */
 function followupImplementNote(t) {
   if (!t.parentId) return '';
   const sessionNote = t.claudeSessionId
@@ -31,7 +32,7 @@ The codebase already contains that work. Build on the existing code — do not s
 `;
 }
 
-/** 리뷰어(Codex)용: 기존 코드는 이미 승인된 컨텍스트임을 알린다. 후속 작업이 아니면 빈 문자열. */
+/** 리뷰어용: 기존 코드는 이미 승인된 컨텍스트임을 알린다. 후속 작업이 아니면 빈 문자열. */
 function followupReviewNote(t) {
   if (!t.parentId) return '';
   return `Note: this requirement is a FOLLOW-UP to earlier work already completed and approved in this directory (previous requirement: "${t.parentRequirement || '(unknown)'}"). Review the implementation of the NEW requirement; treat pre-existing code as accepted context unless the new changes break it.
@@ -42,7 +43,7 @@ function followupReviewNote(t) {
 /* ──────────────────────────── 분해(Plan) ──────────────────────────── */
 
 function planPrompt(t) {
-  return `You are CLAUDE, the implementer in an automated pair-programming loop. Before writing any code, break the requirement below into a short ordered list of small, independently verifiable steps. Your partner CODEX will review your work one step at a time.
+  return `You are the IMPLEMENTER in an automated pair-programming loop. Before writing any code, break the requirement below into a short ordered list of small, independently verifiable steps. Your partner, the REVIEWER, will review your work one step at a time.
 
 ${followupImplementNote(t)}Task requirement:
 <requirement>
@@ -89,7 +90,7 @@ PLAN_UPDATE:
 Omit the marker entirely if the remaining plan is fine.`;
 
 function implementStepPrompt(t, step, plan, stepIndex, total) {
-  return `You are CLAUDE, the implementer in an automated pair-programming loop. CODEX will review this step after you finish.
+  return `You are the IMPLEMENTER in an automated pair-programming loop. The REVIEWER will review this step after you finish.
 
 ${stepHeader(t, step, plan, stepIndex, total)}
 
@@ -101,7 +102,7 @@ Respond in the same language as the requirement.`;
 }
 
 function reviseStepPrompt(t, step, feedback, stepIndex, total, plan) {
-  return `CODEX reviewed step ${stepIndex + 1}/${total} ("${step.title}") and requests changes. Address EVERY point below, then re-verify your work for this step.
+  return `The REVIEWER reviewed step ${stepIndex + 1}/${total} ("${step.title}") and requests changes. Address EVERY point below, then re-verify your work for this step.
 
 Reviewer feedback:
 <feedback>
@@ -117,15 +118,17 @@ Respond in the same language as the requirement.`;
 
 /* ──────────────────────────── 리뷰(Review) ──────────────────────────── */
 
-/** Codex 권한 모드에 따른 검증 지침 한 줄 */
+/** 리뷰어 권한에 따른 검증 지침 한 줄. Claude 리뷰어는 항상 명령 실행 가능,
+    Codex 리뷰어는 작업 제출 시 선택한 샌드박스를 따른다. */
 function sandboxNote(t) {
-  return t.codexSandbox && t.codexSandbox !== 'read-only'
+  const canRun = t.reviewer === 'claude' || (t.codexSandbox && t.codexSandbox !== 'read-only');
+  return canRun
     ? 'You have permission to execute commands — actually RUN the code/tests to verify the claimed behavior before giving your verdict.'
     : 'Your sandbox is read-only: verify by reading the code (running it may be blocked by policy — do not treat blocked commands as implementation failures).';
 }
 
 function reviewStepPrompt(t, step, report, plan, stepIndex, total, iteration) {
-  return `You are CODEX, the code reviewer in an automated pair-programming loop. CLAUDE (the implementer) just finished attempt ${iteration} on step ${stepIndex + 1}/${total} of the plan.
+  return `You are the REVIEWER in an automated pair-programming loop. The IMPLEMENTER just finished attempt ${iteration} on step ${stepIndex + 1}/${total} of the plan.
 
 Overall requirement (for context only):
 <requirement>
@@ -155,7 +158,7 @@ If CHANGES_REQUESTED, follow the verdict line with a concrete, numbered list of 
    A/B 성능 비교(bench.js)를 위해 보존한다. */
 
 function implementPrompt(t) {
-  return `You are CLAUDE, the implementer in an automated pair-programming loop. Your partner CODEX will review your work after you finish.
+  return `You are the IMPLEMENTER in an automated pair-programming loop. Your partner, the REVIEWER, will review your work after you finish.
 
 ${followupImplementNote(t)}Task requirement:
 <requirement>
@@ -168,7 +171,7 @@ When you are done, end with a concise summary of WHAT you implemented, WHICH fil
 }
 
 function revisePrompt(t, feedback) {
-  return `CODEX reviewed your implementation and requests changes. Address EVERY point below, then re-verify your work.
+  return `The REVIEWER reviewed your implementation and requests changes. Address EVERY point below, then re-verify your work.
 
 Reviewer feedback:
 <feedback>
@@ -181,7 +184,7 @@ When done, end with a concise summary of the changes you made in response to eac
 }
 
 function reviewPrompt(t, report, iteration) {
-  return `You are CODEX, the code reviewer in an automated pair-programming loop. CLAUDE (the implementer) just finished iteration ${iteration} of ${t.maxIterations}.
+  return `You are the REVIEWER in an automated pair-programming loop. The IMPLEMENTER just finished iteration ${iteration} of ${t.maxIterations}.
 
 Task requirement:
 <requirement>
@@ -208,7 +211,7 @@ If CHANGES_REQUESTED, follow the verdict line with a concrete, numbered list of 
    리뷰/감사형 요구사항("이 코드 리뷰해줘", "보안 점검해줘")에 사용한다. */
 
 function reviewFirstPrompt(t) {
-  return `You are CODEX, the code reviewer in an automated pair-programming loop. This is a REVIEW-FIRST task: you act before the implementer. Review the EXISTING code in the current working directory against the request below. If you raise issues, your partner CLAUDE (the implementer) will fix them and you will re-review.
+  return `You are the REVIEWER in an automated pair-programming loop. This is a REVIEW-FIRST task: you act before the implementer. Review the EXISTING code in the current working directory against the request below. If you raise issues, your partner, the IMPLEMENTER, will fix them and you will re-review.
 
 Review request:
 <requirement>
@@ -226,7 +229,7 @@ If CHANGES_REQUESTED, follow the verdict line with a concrete, numbered list of 
 }
 
 function fixPrompt(t, feedback) {
-  return `You are CLAUDE, the implementer in an automated pair-programming loop. CODEX (the reviewer) reviewed the existing code in the current working directory against the request below and produced the findings. Address EVERY point, then re-verify your work. CODEX will re-review after you finish.
+  return `You are the IMPLEMENTER in an automated pair-programming loop. The REVIEWER reviewed the existing code in the current working directory against the request below and produced the findings. Address EVERY point, then re-verify your work. The REVIEWER will re-review after you finish.
 
 ${followupImplementNote(t)}Review request:
 <requirement>

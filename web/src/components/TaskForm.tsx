@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ApiError, createTask } from '../api';
-import type { CodexSandbox, TaskMode } from '../types';
+import type { CodexSandbox, Engine, TaskMode } from '../types';
 import { FsModal } from './FsModal';
 import { loadRecents, mergeRecents, PathInput, saveRecent } from './PathInput';
 import { Stepper } from './Stepper';
@@ -33,6 +33,8 @@ export function TaskForm({ onCreated, cwdSuggestions }: TaskFormProps) {
   }, [cwd]);
   const [maxIter, setMaxIter] = useState('8');
   const [mode, setMode] = useState<TaskMode>('single');
+  const [implementer, setImplementer] = useState<Engine>('claude');
+  const [reviewer, setReviewer] = useState<Engine>('codex');
   const [codexSandbox, setCodexSandbox] = useState<CodexSandbox>('bypass');
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
@@ -48,6 +50,8 @@ export function TaskForm({ onCreated, cwdSuggestions }: TaskFormProps) {
         maxIterations: Number(maxIter) || 8,
         codexSandbox,
         mode,
+        implementer,
+        reviewer,
       });
       saveRecent(cwd.trim()); // 서버 검증을 통과한 경로만 최근 목록에 저장
       setReq('');
@@ -80,6 +84,32 @@ export function TaskForm({ onCreated, cwdSuggestions }: TaskFormProps) {
         suggestions={cwdSuggestions}
       />
 
+      {/* 역할별 엔진 선택 — 동일 엔진 조합(claude-claude, codex-codex)도 허용 */}
+      <div className="grid grid-cols-2 gap-[10px]">
+        <div>
+          <label className={labelCls}>구현 AI</label>
+          <select
+            className={`${inputCls} cursor-pointer`}
+            value={implementer}
+            onChange={(e) => setImplementer(e.target.value as Engine)}
+          >
+            <option value="claude">Claude</option>
+            <option value="codex">Codex</option>
+          </select>
+        </div>
+        <div>
+          <label className={labelCls}>리뷰 AI</label>
+          <select
+            className={`${inputCls} cursor-pointer`}
+            value={reviewer}
+            onChange={(e) => setReviewer(e.target.value as Engine)}
+          >
+            <option value="codex">Codex</option>
+            <option value="claude">Claude</option>
+          </select>
+        </div>
+      </div>
+
       <div className="grid grid-cols-[96px_1fr_1fr] gap-[10px]">
         <div>
           <label className={labelCls}>최대 반복</label>
@@ -98,13 +128,15 @@ export function TaskForm({ onCreated, cwdSuggestions }: TaskFormProps) {
           </select>
         </div>
         <div>
-          <label className={labelCls} title="Codex 권한 (리뷰어)">
+          <label className={labelCls} title="Codex가 구현/리뷰 역할로 실행될 때의 샌드박스 권한">
             CODEX 권한
           </label>
           <select
-            className={`${inputCls} cursor-pointer`}
+            className={`${inputCls} cursor-pointer disabled:opacity-40 disabled:cursor-default`}
             value={codexSandbox}
             onChange={(e) => setCodexSandbox(e.target.value as CodexSandbox)}
+            disabled={implementer !== 'codex' && reviewer !== 'codex'}
+            title={implementer !== 'codex' && reviewer !== 'codex' ? 'Codex를 사용하지 않는 조합에서는 적용되지 않습니다' : undefined}
           >
             <option value="bypass">전체 bypass</option>
             <option value="workspace-write">쓰기 허용</option>

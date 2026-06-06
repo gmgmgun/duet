@@ -22,6 +22,7 @@ const {
   DEFAULT_MAX_ITERATIONS,
   DEFAULT_MODE,
   MODES,
+  ENGINES,
   CLAUDE,
   CODEX,
   tasks,
@@ -215,6 +216,9 @@ const server = http.createServer(async (req, res) => {
       const codexSandbox = ['read-only', 'workspace-write', 'bypass'].includes(body.codexSandbox)
         ? body.codexSandbox : 'bypass';
       const mode = MODES.includes(body.mode) ? body.mode : DEFAULT_MODE;
+      // 역할별 엔진 선택 — 기본: Claude 구현 / Codex 리뷰. 동일 엔진 조합 허용.
+      const implementer = ENGINES.includes(body.implementer) ? body.implementer : 'claude';
+      const reviewer = ENGINES.includes(body.reviewer) ? body.reviewer : 'codex';
 
       if (!requirement) return json(res, 400, { error: '요구사항(requirement)을 입력하세요.' });
       if (!cwd || !path.isAbsolute(cwd)) return json(res, 400, { error: '대상 경로(cwd)는 절대 경로여야 합니다.' });
@@ -222,7 +226,7 @@ const server = http.createServer(async (req, res) => {
       try { stat = fs.statSync(cwd); } catch { /* noop */ }
       if (!stat || !stat.isDirectory()) return json(res, 400, { error: `대상 디렉터리가 존재하지 않습니다: ${cwd}` });
 
-      const t = enqueueTask({ requirement, cwd, maxIterations, codexSandbox, mode });
+      const t = enqueueTask({ requirement, cwd, maxIterations, codexSandbox, mode, implementer, reviewer });
       json(res, 201, taskSummary(t));
       return;
     }
@@ -282,6 +286,8 @@ const server = http.createServer(async (req, res) => {
           codexSandbox: ['read-only', 'workspace-write', 'bypass'].includes(body.codexSandbox)
             ? body.codexSandbox : (t.codexSandbox || 'bypass'),
           mode: MODES.includes(body.mode) ? body.mode : (t.mode || DEFAULT_MODE),
+          implementer: ENGINES.includes(body.implementer) ? body.implementer : (t.implementer || 'claude'),
+          reviewer: ENGINES.includes(body.reviewer) ? body.reviewer : (t.reviewer || 'codex'),
           parent: t,
         });
         json(res, 201, taskSummary(nt));

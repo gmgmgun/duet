@@ -25,6 +25,9 @@ const STEP_TIMEOUT_MS = Number(process.env.DUET_STEP_TIMEOUT_MS || 30 * 60 * 100
 const DEFAULT_MAX_ITERATIONS = 8; // micro: 스텝당 최대 구현-리뷰 횟수 / single: 최대 반복
 const MAX_TOTAL_STEPS = 30; // plan 폭주 방지: 전체 스텝 수 상한
 const MODES = ['micro', 'single', 'review'];
+// 역할(구현자/리뷰어)별로 어떤 AI를 쓸지 작업마다 선택한다. 동일 엔진 조합도 허용.
+const ENGINES = ['claude', 'codex'];
+const ENGINE_LABEL = { claude: 'Claude', codex: 'Codex' };
 // 벤치 결과(2026-06): single이 수렴 가능한 규모에선 시간·비용 모두 우세 → 기본값 single.
 // micro는 single이 수렴 못하는 큰 작업용 보험으로 작업별 선택.
 const DEFAULT_MODE = MODES.includes(process.env.DUET_MODE) ? process.env.DUET_MODE : 'single';
@@ -83,6 +86,9 @@ function taskSummary(t) {
     maxIterations: t.maxIterations,
     codexSandbox: t.codexSandbox || 'read-only',
     mode: t.mode || 'single', // mode 도입 전의 옛 작업은 단일 루프로 실행됐음
+    // 역할별 엔진 — 도입 전의 옛 작업은 Claude 구현 / Codex 리뷰 고정이었음
+    implementer: t.implementer || 'claude',
+    reviewer: t.reviewer || 'codex',
     status: t.status,
     iteration: t.iteration,
     // 마이크로 이터레이션: 분해된 스텝 진행 상황 (옛 작업은 plan 없음 → 빈 배열)
@@ -220,9 +226,14 @@ async function runClaude(t, prompt) {
   }
 }
 
-async function runClaudeAttempt(t, prompt) {
+/**
+ * Claude 1회 실행. useSession=true(구현자)면 작업 세션을 --resume으로 잇고
+ * 세션 id를 갱신한다. false(리뷰어)면 매번 새 세션 — 구현자와 컨텍스트를
+ * 공유하지 않아야 독립적인 리뷰가 된다.
+ */
+async function runClaudeAttempt(t, prompt, useSession = true) {
   const args = ['-p', '--output-format', 'stream-json', '--verbose', '--dangerously-skip-permissions'];
-  if (t.claudeSessionId) args.push('--resume', t.claudeSessionId);
+  if (useSession && t.claudeSessionId) args.push('--resume', t.claudeSessionId);
 
   let result = null;
   let isError = false;
@@ -238,7 +249,7 @@ async function runClaudeAttempt(t, prompt) {
       try { ev = JSON.parse(line); } catch { emit(t, 'claude', 'raw', line); return; }
 
       if (ev.type === 'system' && ev.subtype === 'init') {
-        t.claudeSessionId = ev.session_id || t.claudeSessionId;
+        if (useSession) t.claudeSessionId = ev.session_id || t.claudeSessionId;
       } else if (ev.type === 'assistant' && ev.message && Array.isArray(ev.message.content)) {
         for (const block of ev.message.content) {
           if (block.type === 'text' && block.text && block.text.trim()) {
@@ -269,12 +280,21 @@ async function runClaudeAttempt(t, prompt) {
 const ANSI_RE = /\x1b\[[0-9;]*[A-Za-z]/g;
 const CODEX_SECTION_RE = /^(codex|thinking|exec|tool|user|tokens used)$/;
 
-async function runCodex(t, prompt, iteration) {
-  const outFile = path.join(t.dir, `review-${iteration}.md`);
-  // 권한 모드: read-only(기본) | workspace-write | bypass(샌드박스·승인 전부 해제)
-  const sandboxArgs = t.codexSandbox === 'bypass'
+async function runCodex(t, prompt, iteration, role = 'reviewer') {
+  const outFile = path.join(t.dir, `${role === 'implementer' ? 'impl' : 'review'}-${iteration}.md`);
+  // 권한 모드: read-only | workspace-write | bypass(샌드박스·승인 전부 해제).
+  // Codex의 Windows 샌드박스는 workspace-write조차 사실상 read-only로 동작한다(쓰기 차단 확인됨).
+  // 구현자는 파일을 써야 하므로 bypass로 승격하고, 더 좁은 모드를 골랐다면 알린다.
+  let mode = t.codexSandbox === 'bypass' ? 'bypass'
+    : t.codexSandbox === 'workspace-write' ? 'workspace-write' : 'read-only';
+  if (role === 'implementer' && mode !== 'bypass') {
+    emit(t, 'system', 'info',
+      `Codex 구현자는 Windows 샌드박스의 쓰기 제약 때문에 전체 bypass로 실행됩니다 (선택한 모드: ${mode} → 리뷰에만 적용).`);
+    mode = 'bypass';
+  }
+  const sandboxArgs = mode === 'bypass'
     ? ['--dangerously-bypass-approvals-and-sandbox']
-    : ['--sandbox', t.codexSandbox === 'workspace-write' ? 'workspace-write' : 'read-only'];
+    : ['--sandbox', mode];
   const args = [
     'exec',
     '--cd', t.cwd,
@@ -324,6 +344,33 @@ async function runCodex(t, prompt, iteration) {
   const review = fs.readFileSync(outFile, 'utf8').trim();
   emit(t, 'codex', 'text', review);
   return review;
+}
+
+/* ──────────────────────────── 역할 → 엔진 디스패치 ────────────────────────────
+   구현자/리뷰어를 작업별로 Claude/Codex 중 선택한다 (동일 엔진 조합 가능).
+   - Claude 구현자: 작업 세션을 --resume으로 유지 (반복 간 맥락 보존)
+   - Codex 구현자: 호출마다 독립 실행 (프롬프트에 요구사항·피드백 포함, 코드는 디스크에)
+   - Claude 리뷰어: 매번 새 세션 — 구현자와 컨텍스트를 공유하지 않는 독립 리뷰
+   - Codex 리뷰어: 기존 동작 그대로 */
+
+function implLabel(t) { return ENGINE_LABEL[t.implementer] || 'Claude'; }
+function revLabel(t) { return ENGINE_LABEL[t.reviewer] || 'Codex'; }
+
+function runImplementer(t, prompt, label) {
+  if (t.implementer === 'codex') return runCodex(t, prompt, label, 'implementer');
+  return runClaude(t, prompt);
+}
+
+async function runReviewer(t, prompt, label) {
+  if (t.reviewer === 'claude') {
+    const review = await runClaudeAttempt(t, prompt, false);
+    if (review != null) {
+      // Codex 리뷰어와 동일하게 리뷰 본문을 runs/<id>/review-<label>.md로 영속화
+      try { fs.writeFileSync(path.join(t.dir, `review-${label}.md`), review); } catch { /* ignore */ }
+    }
+    return review;
+  }
+  return runCodex(t, prompt, label);
 }
 
 /* ──────────────────────────── Plan 파싱 / 재계획 ──────────────────────────── */
@@ -386,12 +433,13 @@ async function runTask(t) {
 /* ── micro 모드: 마이크로 이터레이션(분해 → 스텝별 구현-리뷰) ── */
 async function runTaskMicro(t) {
   setStatus(t, 'running');
-  emit(t, 'system', 'info', `작업 시작 [micro] — 대상 디렉터리: ${t.cwd} (스텝당 최대 ${t.maxIterations}회 반복)`);
+  emit(t, 'system', 'info',
+    `작업 시작 [micro] — 대상 디렉터리: ${t.cwd} (스텝당 최대 ${t.maxIterations}회 반복, 구현 ${implLabel(t)} / 리뷰 ${revLabel(t)})`);
 
   try {
     // ── [1] PLAN: 요구사항을 스텝으로 분해 ──────────────────────────────
-    emit(t, 'system', 'phase', '계획 수립 — Claude가 요구사항을 분해 중');
-    const planText = await runClaude(t, planPrompt(t));
+    emit(t, 'system', 'phase', `계획 수립 — ${implLabel(t)}가 요구사항을 분해 중`);
+    const planText = await runImplementer(t, planPrompt(t), 'plan');
     if (t.stopRequested) { finishStopped(t); return; }
     t.plan = parsePlan(planText, t);
     t.currentStep = 0;
@@ -416,18 +464,19 @@ async function runTaskMicro(t) {
         t.iteration = i;
         saveMeta(t);
 
-        emit(t, 'system', 'phase', `단계 ${s + 1}/${total} · 반복 ${i}/${t.maxIterations} — Claude 구현 중`);
-        const report = await runClaude(
+        emit(t, 'system', 'phase', `단계 ${s + 1}/${total} · 반복 ${i}/${t.maxIterations} — ${implLabel(t)} 구현 중`);
+        const report = await runImplementer(
           t,
           i === 1
             ? implementStepPrompt(t, step, t.plan, s, total)
             : reviseStepPrompt(t, step, feedback, s, total, t.plan),
+          `${s + 1}-${i}`,
         );
         if (t.stopRequested) break;
         applyPlanUpdate(t, report, s); // 하이브리드: 남은 계획 갱신
 
-        emit(t, 'system', 'phase', `단계 ${s + 1}/${total} · 반복 ${i}/${t.maxIterations} — Codex 리뷰 중`);
-        const review = await runCodex(t, reviewStepPrompt(t, step, report, t.plan, s, total, i), `${s + 1}-${i}`);
+        emit(t, 'system', 'phase', `단계 ${s + 1}/${total} · 반복 ${i}/${t.maxIterations} — ${revLabel(t)} 리뷰 중`);
+        const review = await runReviewer(t, reviewStepPrompt(t, step, report, t.plan, s, total, i), `${s + 1}-${i}`);
         if (t.stopRequested) break;
 
         if (/^\s*VERDICT:\s*APPROVED/im.test(review)) {
@@ -435,7 +484,7 @@ async function runTaskMicro(t) {
           break;
         }
         feedback = review;
-        emit(t, 'system', 'info', `Codex가 단계 ${s + 1} 수정을 요청했습니다 → 다음 반복으로 진행`);
+        emit(t, 'system', 'info', `${revLabel(t)}가 단계 ${s + 1} 수정을 요청했습니다 → 다음 반복으로 진행`);
       }
 
       if (t.stopRequested) break;
@@ -453,7 +502,7 @@ async function runTaskMicro(t) {
     if (t.stopRequested) {
       finishStopped(t);
     } else {
-      emit(t, 'system', 'info', `✓ 전체 ${t.plan.length}단계 완료 — Codex가 모두 승인했습니다.`);
+      emit(t, 'system', 'info', `✓ 전체 ${t.plan.length}단계 완료 — ${revLabel(t)}가 모두 승인했습니다.`);
       setStatus(t, 'approved');
     }
   } catch (err) {
@@ -474,7 +523,8 @@ function finishStopped(t) {
 /* ── single 모드: 기존 단일 루프(요구사항 전체를 한 덩어리로 구현-리뷰) ── */
 async function runTaskSingle(t) {
   setStatus(t, 'running');
-  emit(t, 'system', 'info', `작업 시작 [single] — 대상 디렉터리: ${t.cwd} (최대 ${t.maxIterations}회 반복)`);
+  emit(t, 'system', 'info',
+    `작업 시작 [single] — 대상 디렉터리: ${t.cwd} (최대 ${t.maxIterations}회 반복, 구현 ${implLabel(t)} / 리뷰 ${revLabel(t)})`);
 
   try {
     let feedback = null;
@@ -484,21 +534,21 @@ async function runTaskSingle(t) {
       t.iteration = i;
       saveMeta(t);
 
-      emit(t, 'system', 'phase', `반복 ${i}/${t.maxIterations} — Claude 구현 중`);
-      const report = await runClaude(t, i === 1 ? implementPrompt(t) : revisePrompt(t, feedback));
+      emit(t, 'system', 'phase', `반복 ${i}/${t.maxIterations} — ${implLabel(t)} 구현 중`);
+      const report = await runImplementer(t, i === 1 ? implementPrompt(t) : revisePrompt(t, feedback), i);
       if (t.stopRequested) break;
 
-      emit(t, 'system', 'phase', `반복 ${i}/${t.maxIterations} — Codex 리뷰 중`);
-      const review = await runCodex(t, reviewPrompt(t, report, i), i);
+      emit(t, 'system', 'phase', `반복 ${i}/${t.maxIterations} — ${revLabel(t)} 리뷰 중`);
+      const review = await runReviewer(t, reviewPrompt(t, report, i), i);
       if (t.stopRequested) break;
 
       if (/^\s*VERDICT:\s*APPROVED/im.test(review)) {
-        emit(t, 'system', 'info', `✓ Codex 승인 — 추가 요구사항 없음. ${i}회 반복 만에 완료.`);
+        emit(t, 'system', 'info', `✓ ${revLabel(t)} 승인 — 추가 요구사항 없음. ${i}회 반복 만에 완료.`);
         setStatus(t, 'approved');
         return;
       }
       feedback = review;
-      emit(t, 'system', 'info', 'Codex가 수정을 요청했습니다 → 다음 반복으로 진행');
+      emit(t, 'system', 'info', `${revLabel(t)}가 수정을 요청했습니다 → 다음 반복으로 진행`);
     }
 
     if (t.stopRequested) {
@@ -523,33 +573,34 @@ async function runTaskSingle(t) {
    최대 반복을 1로 두면 수정 없이 리뷰만 수행한다. */
 async function runTaskReview(t) {
   setStatus(t, 'running');
-  emit(t, 'system', 'info', `작업 시작 [review] — 대상 디렉터리: ${t.cwd} (최대 ${t.maxIterations}회 반복, Codex 선리뷰)`);
+  emit(t, 'system', 'info',
+    `작업 시작 [review] — 대상 디렉터리: ${t.cwd} (최대 ${t.maxIterations}회 반복, ${revLabel(t)} 선리뷰 / ${implLabel(t)} 수정)`);
 
   try {
-    let report = null; // 직전 Claude 수정 보고 — 2회차부터의 재리뷰에 전달
+    let report = null; // 직전 구현자 수정 보고 — 2회차부터의 재리뷰에 전달
 
     for (let i = 1; i <= t.maxIterations; i++) {
       if (t.stopRequested) break;
       t.iteration = i;
       saveMeta(t);
 
-      emit(t, 'system', 'phase', `반복 ${i}/${t.maxIterations} — Codex 리뷰 중`);
-      const review = await runCodex(t, i === 1 ? reviewFirstPrompt(t) : reviewPrompt(t, report, i), i);
+      emit(t, 'system', 'phase', `반복 ${i}/${t.maxIterations} — ${revLabel(t)} 리뷰 중`);
+      const review = await runReviewer(t, i === 1 ? reviewFirstPrompt(t) : reviewPrompt(t, report, i), i);
       if (t.stopRequested) break;
 
       if (/^\s*VERDICT:\s*APPROVED/im.test(review)) {
         emit(t, 'system', 'info', i === 1
-          ? '✓ Codex 승인 — 리뷰 지적사항이 없습니다.'
-          : `✓ Codex 승인 — 모든 지적사항이 해결되었습니다. ${i}회 반복 만에 완료.`);
+          ? `✓ ${revLabel(t)} 승인 — 리뷰 지적사항이 없습니다.`
+          : `✓ ${revLabel(t)} 승인 — 모든 지적사항이 해결되었습니다. ${i}회 반복 만에 완료.`);
         setStatus(t, 'approved');
         return;
       }
       if (i === t.maxIterations) break; // 마지막 리뷰가 미승인 → 아래에서 max_iterations 처리
 
-      emit(t, 'system', 'phase', `반복 ${i}/${t.maxIterations} — Claude 수정 중`);
-      report = await runClaude(t, fixPrompt(t, review));
+      emit(t, 'system', 'phase', `반복 ${i}/${t.maxIterations} — ${implLabel(t)} 수정 중`);
+      report = await runImplementer(t, fixPrompt(t, review), `fix-${i}`);
       if (t.stopRequested) break;
-      emit(t, 'system', 'info', 'Claude가 지적사항을 처리했습니다 → Codex 재리뷰로 진행');
+      emit(t, 'system', 'info', `${implLabel(t)}가 지적사항을 처리했습니다 → ${revLabel(t)} 재리뷰로 진행`);
     }
 
     if (t.stopRequested) {
@@ -584,12 +635,17 @@ function pump() {
  * 입력값 검증은 호출자(HTTP 서버)가 담당한다.
  * parent가 있으면 후속 작업: 부모의 Claude 세션을 물려받아 맥락을 이어간다.
  */
-function enqueueTask({ requirement, cwd, maxIterations, codexSandbox, mode, parent }) {
+function enqueueTask({ requirement, cwd, maxIterations, codexSandbox, mode, implementer, reviewer, parent }) {
   const id = newId();
+  const impl = ENGINES.includes(implementer) ? implementer : 'claude';
+  // Claude 세션은 구현자가 Claude일 때만 의미가 있다 — 다른 엔진이면 상속하지 않음
+  const inheritSession = !!(parent && parent.claudeSessionId && impl === 'claude');
   const t = {
     id, requirement, cwd, maxIterations, // maxIterations = 스텝당 최대 구현-리뷰 횟수
     codexSandbox: codexSandbox || 'bypass',
     mode: MODES.includes(mode) ? mode : DEFAULT_MODE,
+    implementer: impl,
+    reviewer: ENGINES.includes(reviewer) ? reviewer : 'codex',
     status: 'queued', iteration: 0,
     plan: [], currentStep: 0, // 마이크로 이터레이션 상태
     createdAt: Date.now(), finishedAt: null,
@@ -599,8 +655,8 @@ function enqueueTask({ requirement, cwd, maxIterations, codexSandbox, mode, pare
     // 이어가기: 부모 작업의 세션·요구사항 상속
     parentId: parent ? parent.id : null,
     parentRequirement: parent ? parent.requirement : null,
-    claudeSessionId: parent ? parent.claudeSessionId || null : null,
-    inheritedSession: !!(parent && parent.claudeSessionId),
+    claudeSessionId: inheritSession ? parent.claudeSessionId : null,
+    inheritedSession: inheritSession,
     claudeOk: false,
   };
   fs.mkdirSync(t.dir, { recursive: true });
@@ -664,6 +720,7 @@ module.exports = {
   DEFAULT_MAX_ITERATIONS,
   DEFAULT_MODE,
   MODES,
+  ENGINES,
   CLAUDE,
   CODEX,
   // 상태
