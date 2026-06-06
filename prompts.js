@@ -60,7 +60,7 @@ End your message with EXACTLY this marker on its own line, followed by a JSON ar
 PLAN_JSON:
 [{"title": "short imperative description of step 1"}, {"title": "step 2"}]
 
-Write the step titles in the same language as the requirement.`;
+Write the step titles in Korean (한국어), regardless of the language of the requirement.`;
 }
 
 /* ──────────────────────────── 구현(Implement) ──────────────────────────── */
@@ -98,7 +98,7 @@ Implement ONLY this step in the current working directory. Write real, working c
 
 When you are done, end with a concise summary of WHAT you implemented for this step, WHICH files you touched, and HOW to run/verify it.
 ${PLAN_UPDATE_NOTE}
-Respond in the same language as the requirement.`;
+Always respond in Korean (한국어), regardless of the language of the requirement.`;
 }
 
 function reviseStepPrompt(t, step, feedback, stepIndex, total, plan) {
@@ -113,7 +113,7 @@ ${feedback}
 
 Stay focused on the current step only. When done, end with a concise summary of the changes you made in response to each point.
 ${PLAN_UPDATE_NOTE}
-Respond in the same language as the requirement.`;
+Always respond in Korean (한국어), regardless of the language of the requirement.`;
 }
 
 /* ──────────────────────────── 리뷰(Review) ──────────────────────────── */
@@ -151,7 +151,7 @@ Your final message MUST start with exactly one of these lines:
 VERDICT: APPROVED
 VERDICT: CHANGES_REQUESTED
 
-If CHANGES_REQUESTED, follow the verdict line with a concrete, numbered list of issues for THIS step, each actionable for the implementer. Only approve when you have NO further requirements for this step. Respond in the same language as the requirement.`;
+If CHANGES_REQUESTED, follow the verdict line with a concrete, numbered list of issues for THIS step, each actionable for the implementer. Only approve when you have NO further requirements for this step. Always respond in Korean (한국어), regardless of the language of the requirement.`;
 }
 
 /* ──────────────────────────── 단일 루프(single 모드) ────────────────────────────
@@ -168,7 +168,7 @@ ${t.requirement}
 
 Implement this requirement in the current working directory. Write real, working code — create files, run commands, and verify your work where possible.
 
-When you are done, end with a concise summary of WHAT you implemented, WHICH files you touched, and HOW to run/verify it. Respond in the same language as the requirement.`;
+When you are done, end with a concise summary of WHAT you implemented, WHICH files you touched, and HOW to run/verify it. Always respond in Korean (한국어), regardless of the language of the requirement.`;
 }
 
 function revisePrompt(t, feedback) {
@@ -181,7 +181,7 @@ ${feedback}
 
 (Original requirement, for reference: ${t.requirement})
 
-When done, end with a concise summary of the changes you made in response to each point. Respond in the same language as the requirement.`;
+When done, end with a concise summary of the changes you made in response to each point. Always respond in Korean (한국어), regardless of the language of the requirement.`;
 }
 
 function reviewPrompt(t, report, iteration) {
@@ -204,7 +204,7 @@ Your final message MUST start with exactly one of these lines:
 VERDICT: APPROVED
 VERDICT: CHANGES_REQUESTED
 
-If CHANGES_REQUESTED, follow the verdict line with a concrete, numbered list of issues or missing requirements, each actionable for the implementer. Only approve when you have NO further requirements. Respond in the same language as the requirement.`;
+If CHANGES_REQUESTED, follow the verdict line with a concrete, numbered list of issues or missing requirements, each actionable for the implementer. Only approve when you have NO further requirements. Always respond in Korean (한국어), regardless of the language of the requirement.`;
 }
 
 /* ──────────────────────────── 선리뷰 루프(review 모드) ────────────────────────────
@@ -226,7 +226,7 @@ Your final message MUST start with exactly one of these lines:
 VERDICT: APPROVED
 VERDICT: CHANGES_REQUESTED
 
-If CHANGES_REQUESTED, follow the verdict line with a concrete, numbered list of issues, each actionable for the implementer. Use APPROVED only when you have NO findings worth fixing. Respond in the same language as the requirement.`;
+If CHANGES_REQUESTED, follow the verdict line with a concrete, numbered list of issues, each actionable for the implementer. Use APPROVED only when you have NO findings worth fixing. Always respond in Korean (한국어), regardless of the language of the requirement.`;
 }
 
 function fixPrompt(t, feedback) {
@@ -242,7 +242,7 @@ Reviewer findings:
 ${feedback}
 </feedback>
 
-When done, end with a concise summary of the changes you made in response to each finding. Respond in the same language as the requirement.`;
+When done, end with a concise summary of the changes you made in response to each finding. Always respond in Korean (한국어), regardless of the language of the requirement.`;
 }
 
 module.exports = {
