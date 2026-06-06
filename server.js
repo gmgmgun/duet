@@ -125,11 +125,13 @@ function readBody(req) {
 /* ──────────────────────────── HTTP 서버 ──────────────────────────── */
 
 const server = http.createServer(async (req, res) => {
-  const url = new URL(req.url, `http://${req.headers.host}`);
-  const p = url.pathname;
-
   try {
     if (rejectCrossOrigin(req, res)) return;
+
+    // pathname/searchParams만 쓰므로 base는 상수로 — 비정상 Host 헤더가
+    // URL 파싱을 깨뜨려 프로세스를 죽이는 일이 없도록 한다(Host 검증은 위에서 별도 수행).
+    const url = new URL(req.url, 'http://localhost');
+    const p = url.pathname;
 
     // 세션 CSRF 토큰 발급 — same-origin 페이지만 응답을 읽을 수 있다(CORS 헤더 없음)
     if (req.method === 'GET' && p === '/api/csrf') {
