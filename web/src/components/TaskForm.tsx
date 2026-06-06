@@ -94,6 +94,7 @@ export function TaskForm({ onCreated, cwdSuggestions }: TaskFormProps) {
           >
             <option value="single">single</option>
             <option value="micro">micro</option>
+            <option value="review">review</option>
           </select>
         </div>
         <div>

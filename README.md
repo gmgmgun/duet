@@ -74,6 +74,14 @@ web/src/
 | 구현 (Claude) | `claude -p --output-format stream-json --dangerously-skip-permissions` | 항상 전체 bypass — 읽기/쓰기/명령 실행 |
 | 리뷰 (Codex) | `codex exec --sandbox <모드> --skip-git-repo-check` | 작업별 선택 (아래 표) |
 
+### 진행 모드 (작업 제출 시 선택)
+
+| 모드 | 흐름 | 용도 |
+|------|------|------|
+| `single` (기본) | Claude 구현 → Codex 리뷰 반복 | 일반 구현 작업 |
+| `micro` | Claude가 계획 수립 → 스텝별 구현·리뷰 | single이 수렴하지 못하는 큰 작업 |
+| `review` | **Codex 리뷰 → Claude 수정** 반복 (역순) | 기존 코드 리뷰/감사. 첫 리뷰에서 지적사항이 없으면 즉시 승인 종료. 최대 반복을 1로 두면 수정 없이 리뷰만 수행 |
+
 ### Codex 권한 모드 (작업 제출 시 선택)
 
 | 모드 | 플래그 | 설명 |

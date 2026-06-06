@@ -10,7 +10,7 @@ export type TaskStatus =
   | 'interrupted';
 
 export type CodexSandbox = 'bypass' | 'workspace-write' | 'read-only';
-export type TaskMode = 'single' | 'micro';
+export type TaskMode = 'single' | 'micro' | 'review';
 
 export interface TaskStep {
   title: string;

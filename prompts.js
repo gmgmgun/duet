@@ -117,6 +117,13 @@ Respond in the same language as the requirement.`;
 
 /* ──────────────────────────── 리뷰(Review) ──────────────────────────── */
 
+/** Codex 권한 모드에 따른 검증 지침 한 줄 */
+function sandboxNote(t) {
+  return t.codexSandbox && t.codexSandbox !== 'read-only'
+    ? 'You have permission to execute commands — actually RUN the code/tests to verify the claimed behavior before giving your verdict.'
+    : 'Your sandbox is read-only: verify by reading the code (running it may be blocked by policy — do not treat blocked commands as implementation failures).';
+}
+
 function reviewStepPrompt(t, step, report, plan, stepIndex, total, iteration) {
   return `You are CODEX, the code reviewer in an automated pair-programming loop. CLAUDE (the implementer) just finished attempt ${iteration} on step ${stepIndex + 1}/${total} of the plan.
 
@@ -134,9 +141,7 @@ ${report}
 </report>
 
 Do NOT trust the report — inspect the actual files in the working directory and verify that this step is fully and correctly implemented, and that the code quality is acceptable (correctness first; style nitpicks only if serious).
-${t.codexSandbox && t.codexSandbox !== 'read-only'
-    ? 'You have permission to execute commands — actually RUN the code/tests to verify the claimed behavior before giving your verdict.'
-    : 'Your sandbox is read-only: verify by reading the code (running it may be blocked by policy — do not treat blocked commands as implementation failures).'}
+${sandboxNote(t)}
 
 Your final message MUST start with exactly one of these lines:
 VERDICT: APPROVED
@@ -189,15 +194,51 @@ ${report}
 </report>
 
 Do NOT trust the report — inspect the actual files in the working directory and verify that the requirement is fully and correctly implemented, and that the code quality is acceptable (correctness first; style nitpicks only if serious).
-${t.codexSandbox && t.codexSandbox !== 'read-only'
-    ? 'You have permission to execute commands — actually RUN the code/tests to verify the claimed behavior before giving your verdict.'
-    : 'Your sandbox is read-only: verify by reading the code (running it may be blocked by policy — do not treat blocked commands as implementation failures).'}
+${sandboxNote(t)}
 
 Your final message MUST start with exactly one of these lines:
 VERDICT: APPROVED
 VERDICT: CHANGES_REQUESTED
 
 If CHANGES_REQUESTED, follow the verdict line with a concrete, numbered list of issues or missing requirements, each actionable for the implementer. Only approve when you have NO further requirements. Respond in the same language as the requirement.`;
+}
+
+/* ──────────────────────────── 선리뷰 루프(review 모드) ────────────────────────────
+   Codex가 먼저 기존 코드를 리뷰하고, 지적사항이 있으면 Claude가 수정하는 역순 루프.
+   리뷰/감사형 요구사항("이 코드 리뷰해줘", "보안 점검해줘")에 사용한다. */
+
+function reviewFirstPrompt(t) {
+  return `You are CODEX, the code reviewer in an automated pair-programming loop. This is a REVIEW-FIRST task: you act before the implementer. Review the EXISTING code in the current working directory against the request below. If you raise issues, your partner CLAUDE (the implementer) will fix them and you will re-review.
+
+Review request:
+<requirement>
+${t.requirement}
+</requirement>
+
+${followupReviewNote(t)}Inspect the actual files in the working directory. If the request names specific files, areas, or concerns, focus there; otherwise review for correctness first, then security and code quality (style nitpicks only if serious).
+${sandboxNote(t)}
+
+Your final message MUST start with exactly one of these lines:
+VERDICT: APPROVED
+VERDICT: CHANGES_REQUESTED
+
+If CHANGES_REQUESTED, follow the verdict line with a concrete, numbered list of issues, each actionable for the implementer. Use APPROVED only when you have NO findings worth fixing. Respond in the same language as the requirement.`;
+}
+
+function fixPrompt(t, feedback) {
+  return `You are CLAUDE, the implementer in an automated pair-programming loop. CODEX (the reviewer) reviewed the existing code in the current working directory against the request below and produced the findings. Address EVERY point, then re-verify your work. CODEX will re-review after you finish.
+
+${followupImplementNote(t)}Review request:
+<requirement>
+${t.requirement}
+</requirement>
+
+Reviewer findings:
+<feedback>
+${feedback}
+</feedback>
+
+When done, end with a concise summary of the changes you made in response to each finding. Respond in the same language as the requirement.`;
 }
 
 module.exports = {
@@ -210,4 +251,7 @@ module.exports = {
   implementPrompt,
   revisePrompt,
   reviewPrompt,
+  // 선리뷰 루프 (review 모드)
+  reviewFirstPrompt,
+  fixPrompt,
 };

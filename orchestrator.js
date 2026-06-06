@@ -16,6 +16,7 @@ const { spawn, execSync } = require('child_process');
 const {
   planPrompt, implementStepPrompt, reviseStepPrompt, reviewStepPrompt, // micro 모드
   implementPrompt, revisePrompt, reviewPrompt, // single 모드
+  reviewFirstPrompt, fixPrompt, // review 모드 (Codex 선리뷰)
 } = require('./prompts');
 
 const ROOT = __dirname;
@@ -23,7 +24,7 @@ const RUNS_DIR = path.join(ROOT, 'runs');
 const STEP_TIMEOUT_MS = Number(process.env.DUET_STEP_TIMEOUT_MS || 30 * 60 * 1000); // AI 1회 호출 제한
 const DEFAULT_MAX_ITERATIONS = 8; // micro: 스텝당 최대 구현-리뷰 횟수 / single: 최대 반복
 const MAX_TOTAL_STEPS = 30; // plan 폭주 방지: 전체 스텝 수 상한
-const MODES = ['micro', 'single'];
+const MODES = ['micro', 'single', 'review'];
 // 벤치 결과(2026-06): single이 수렴 가능한 규모에선 시간·비용 모두 우세 → 기본값 single.
 // micro는 single이 수렴 못하는 큰 작업용 보험으로 작업별 선택.
 const DEFAULT_MODE = MODES.includes(process.env.DUET_MODE) ? process.env.DUET_MODE : 'single';
@@ -378,6 +379,7 @@ function applyPlanUpdate(t, report, stepIndex) {
 /** 모드에 따라 적절한 러너로 위임한다. */
 async function runTask(t) {
   if (t.mode === 'single') return runTaskSingle(t);
+  if (t.mode === 'review') return runTaskReview(t);
   return runTaskMicro(t);
 }
 
@@ -503,6 +505,57 @@ async function runTaskSingle(t) {
       finishStopped(t);
     } else {
       emit(t, 'system', 'error', `최대 반복 횟수(${t.maxIterations})에 도달했지만 승인되지 않았습니다. 마지막 리뷰를 확인하세요.`);
+      setStatus(t, 'max_iterations');
+    }
+  } catch (err) {
+    if (t.stopRequested) {
+      finishStopped(t);
+    } else {
+      emit(t, 'system', 'error', `오류: ${err.message}`);
+      setStatus(t, 'error');
+    }
+  }
+}
+
+/* ── review 모드: Codex 선(先)리뷰 → Claude 수정 → 재리뷰 반복 ──
+   기존 코드를 리뷰하는 작업용. 반복 i = 리뷰 i회차 + (지적사항 있을 때) 수정 i회차.
+   마지막 반복의 리뷰가 미승인이면 수정 없이 종료 — 재리뷰되지 않을 수정은 만들지 않는다.
+   최대 반복을 1로 두면 수정 없이 리뷰만 수행한다. */
+async function runTaskReview(t) {
+  setStatus(t, 'running');
+  emit(t, 'system', 'info', `작업 시작 [review] — 대상 디렉터리: ${t.cwd} (최대 ${t.maxIterations}회 반복, Codex 선리뷰)`);
+
+  try {
+    let report = null; // 직전 Claude 수정 보고 — 2회차부터의 재리뷰에 전달
+
+    for (let i = 1; i <= t.maxIterations; i++) {
+      if (t.stopRequested) break;
+      t.iteration = i;
+      saveMeta(t);
+
+      emit(t, 'system', 'phase', `반복 ${i}/${t.maxIterations} — Codex 리뷰 중`);
+      const review = await runCodex(t, i === 1 ? reviewFirstPrompt(t) : reviewPrompt(t, report, i), i);
+      if (t.stopRequested) break;
+
+      if (/^\s*VERDICT:\s*APPROVED/im.test(review)) {
+        emit(t, 'system', 'info', i === 1
+          ? '✓ Codex 승인 — 리뷰 지적사항이 없습니다.'
+          : `✓ Codex 승인 — 모든 지적사항이 해결되었습니다. ${i}회 반복 만에 완료.`);
+        setStatus(t, 'approved');
+        return;
+      }
+      if (i === t.maxIterations) break; // 마지막 리뷰가 미승인 → 아래에서 max_iterations 처리
+
+      emit(t, 'system', 'phase', `반복 ${i}/${t.maxIterations} — Claude 수정 중`);
+      report = await runClaude(t, fixPrompt(t, review));
+      if (t.stopRequested) break;
+      emit(t, 'system', 'info', 'Claude가 지적사항을 처리했습니다 → Codex 재리뷰로 진행');
+    }
+
+    if (t.stopRequested) {
+      finishStopped(t);
+    } else {
+      emit(t, 'system', 'error', `최대 반복 횟수(${t.maxIterations})에 도달했지만 승인되지 않았습니다. 마지막 리뷰의 지적사항을 확인하세요.`);
       setStatus(t, 'max_iterations');
     }
   } catch (err) {
