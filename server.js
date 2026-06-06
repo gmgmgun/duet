@@ -12,6 +12,7 @@
  */
 'use strict';
 
+const crypto = require('crypto');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -52,6 +53,54 @@ const MIME = {
   '.txt': 'text/plain; charset=utf-8',
 };
 
+/* ─────────────────────── CSRF / 원격지 방어 ─────────────────────── */
+
+// 서버 프로세스 수명 동안 유지되는 세션 CSRF 토큰.
+// 프론트엔드가 GET /api/csrf로 받아 모든 POST에 X-Duet-Csrf 헤더로 첨부한다.
+// 악성 외부 페이지는 CORS 정책상 이 토큰을 읽을 수도, 커스텀 헤더를 보낼 수도 없다.
+const CSRF_TOKEN = crypto.randomBytes(32).toString('hex');
+
+const LOCAL_HOSTNAMES = new Set(['127.0.0.1', 'localhost', '[::1]']);
+
+// Host/Origin 헤더 값에서 호스트네임만 추출 — 파싱 불가 시 '' 반환
+function hostnameOf(value) {
+  if (!value) return '';
+  try {
+    return new URL(value.includes('://') ? value : `http://${value}`).hostname;
+  } catch {
+    return '';
+  }
+}
+
+// 로컬에서 온 요청인지 검증. 통과하지 못하면 응답을 보내고 true 반환.
+function rejectCrossOrigin(req, res) {
+  // Host가 로컬이 아니면 거부 — DNS rebinding 차단
+  if (!LOCAL_HOSTNAMES.has(hostnameOf(req.headers.host))) {
+    json(res, 403, { error: 'forbidden host' });
+    return true;
+  }
+  // Origin이 있으면(브라우저 요청) 로컬이어야 함 — cross-origin 페이지의 요청 차단
+  // (Vite 개발 서버 localhost:5173 프록시 경유도 허용)
+  if (req.headers.origin && !LOCAL_HOSTNAMES.has(hostnameOf(req.headers.origin))) {
+    json(res, 403, { error: 'forbidden origin' });
+    return true;
+  }
+  // 상태 변경 요청은 JSON Content-Type + 세션 CSRF 토큰 필수.
+  // 둘 다 cross-origin에서는 preflight 없이 보낼 수 없는 조건이다.
+  if (req.method !== 'GET') {
+    const ct = String(req.headers['content-type'] || '').toLowerCase();
+    if (!ct.startsWith('application/json')) {
+      json(res, 415, { error: 'Content-Type은 application/json이어야 합니다.' });
+      return true;
+    }
+    if (req.headers['x-duet-csrf'] !== CSRF_TOKEN) {
+      json(res, 403, { error: 'CSRF 토큰이 유효하지 않습니다. 페이지를 새로고침하세요.' });
+      return true;
+    }
+  }
+  return false;
+}
+
 /* ──────────────────────────── HTTP 유틸 ──────────────────────────── */
 
 function json(res, code, body) {
@@ -80,6 +129,13 @@ const server = http.createServer(async (req, res) => {
   const p = url.pathname;
 
   try {
+    if (rejectCrossOrigin(req, res)) return;
+
+    // 세션 CSRF 토큰 발급 — same-origin 페이지만 응답을 읽을 수 있다(CORS 헤더 없음)
+    if (req.method === 'GET' && p === '/api/csrf') {
+      return json(res, 200, { token: CSRF_TOKEN });
+    }
+
     // 정적 파일 — public/ (Vite 빌드 산출물). /api/* 외의 GET 요청을 처리한다.
     if (req.method === 'GET' && !p.startsWith('/api/')) {
       const rel = decodeURIComponent(p === '/' ? '/index.html' : p);
