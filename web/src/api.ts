@@ -55,7 +55,7 @@ export function stopTask(id: string): Promise<{ ok: boolean }> {
 /** 종료된 작업을 이어가는 후속 작업 생성 — cwd·모드·권한·Claude 세션을 상속 */
 export function continueTask(
   id: string,
-  input: { requirement: string; maxIterations?: number },
+  input: { requirement: string; acceptanceCriteria?: string[]; maxIterations?: number; minIterations?: number },
 ): Promise<Task> {
   return post(`/api/tasks/${id}/continue`, input);
 }

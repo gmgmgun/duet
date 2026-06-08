@@ -82,9 +82,11 @@ function taskSummary(t) {
   return {
     id: t.id,
     requirement: t.requirement,
+    acceptanceCriteria: Array.isArray(t.acceptanceCriteria) ? t.acceptanceCriteria : [],
     cwd: t.cwd,
     maxIterations: t.maxIterations,
-    codexSandbox: t.codexSandbox || 'read-only',
+    minIterations: t.minIterations || 1,
+    codexSandbox: t.codexSandbox || 'bypass',
     mode: t.mode || 'single', // mode 도입 전의 옛 작업은 단일 루프로 실행됐음
     // 역할별 엔진 — 도입 전의 옛 작업은 Claude 구현 / Codex 리뷰 고정이었음
     implementer: t.implementer || 'claude',
@@ -107,7 +109,57 @@ function taskSummary(t) {
 function saveMeta(t) {
   try {
     fs.writeFileSync(path.join(t.dir, 'meta.json'), JSON.stringify(taskSummary(t), null, 2));
+    saveState(t);
   } catch { /* 디스크 기록 실패는 치명적이지 않음 */ }
+}
+
+function saveState(t) {
+  try {
+    const state = {
+      ...taskSummary(t),
+      automation: {
+        version: 1,
+        branchName: t.branchName || null,
+        commits: Array.isArray(t.commits) ? t.commits : [],
+        verificationCommands: Array.isArray(t.verificationCommands) ? t.verificationCommands : [],
+        safetyPolicy: t.safetyPolicy || defaultSafetyPolicy(),
+        finalAudit: t.finalAudit || null,
+      },
+      reviewJson: t.reviewJson || null,
+      updatedAt: Date.now(),
+    };
+    fs.writeFileSync(path.join(t.dir, 'state.json'), JSON.stringify(state, null, 2));
+  } catch { /* ignore */ }
+}
+
+function defaultSafetyPolicy() {
+  return {
+    cwdOnly: true,
+    blockDestructiveGit: true,
+    requireReviewBeforeCommit: true,
+    networkPolicy: 'agent-default',
+    reviewerSandbox: 'bypass',
+  };
+}
+
+function detectVerificationCommands(cwd) {
+  const dirs = [cwd, path.join(cwd, 'frontend'), path.join(cwd, 'web')];
+  const found = [];
+  for (const dir of dirs) {
+    const pkg = path.join(dir, 'package.json');
+    if (!fs.existsSync(pkg)) continue;
+    try {
+      const data = JSON.parse(fs.readFileSync(pkg, 'utf8'));
+      const scripts = data && typeof data === 'object' ? data.scripts || {} : {};
+      for (const name of ['typecheck', 'test', 'lint', 'build']) {
+        if (scripts[name]) {
+          const rel = path.relative(cwd, dir) || '.';
+          found.push(rel === '.' ? `npm run ${name}` : `npm --prefix ${rel} run ${name}`);
+        }
+      }
+    } catch { /* ignore malformed package.json */ }
+  }
+  return [...new Set(found)];
 }
 
 function emit(t, role, kind, text) {
@@ -126,6 +178,7 @@ function setStatus(t, status) {
     t.finishedAt = Date.now();
   }
   saveMeta(t);
+  saveState(t);
   const payload = `event: status\ndata: ${JSON.stringify(taskSummary(t))}\n\n`;
   for (const res of t.subscribers) res.write(payload);
 }
@@ -308,6 +361,31 @@ async function runClaudeAttempt(t, prompt, role = 'implementer') {
 const ANSI_RE = /\x1b\[[0-9;]*[A-Za-z]/g;
 const CODEX_SECTION_RE = /^(codex|thinking|exec|tool|user|tokens used)$/;
 
+function isCodexHeaderLine(s) {
+  return (
+    s === '--------' ||
+    /^OpenAI Codex\b/.test(s) ||
+    /^(workdir|model|provider|approval|sandbox|reasoning effort|reasoning summaries|session id):\s/.test(s)
+  );
+}
+
+function isCodexCommandLine(s) {
+  return /^".+"\s+in\s+[A-Za-z]:\\/.test(s);
+}
+
+function isCodexStatusLine(s) {
+  return /^(succeeded|failed) in \d+ms:/.test(s);
+}
+
+function isLikelyCodexText(s) {
+  if (!s || isCodexHeaderLine(s) || isCodexCommandLine(s) || isCodexStatusLine(s)) return false;
+  if (s.length > 700) return false;
+  if (/^(diff --git|index |--- |\+\+\+ |@@|Mode\s+|----\s+|Directory:|✖\s+\d+)/.test(s)) return false;
+  if (/^[+\-]\s/.test(s) || /^[A-Za-z]:\\/.test(s) || /^\d+:\d+\s+warning\b/i.test(s)) return false;
+  if (/\bwarning\b.*(@typescript-eslint|react-hooks)\//i.test(s)) return false;
+  return /[가-힣]/.test(s) || /^(I|I'll|I will|Now|Next|Done|Summary|Implemented|Verified)\b/i.test(s);
+}
+
 async function runCodex(t, prompt, iteration, role = 'reviewer') {
   const outFile = path.join(t.dir, `${role === 'implementer' ? 'impl' : 'review'}-${iteration}.md`);
   // 권한 모드: read-only | workspace-write | bypass(샌드박스·승인 전부 해제).
@@ -351,8 +429,7 @@ async function runCodex(t, prompt, iteration, role = 'reviewer') {
       const trimmed = cleaned.trim();
 
       if (afterTokens) {
-        // 토큰 수 한 줄만 보여주고 그 뒤(최종 메시지 중복)는 버림
-        if (/^[\d,]+$/.test(trimmed)) emit(t, 'system', 'info', `Codex tokens used: ${trimmed}`);
+        // 토큰 수와 최종 메시지 중복 출력은 로그에 남기지 않음
         return;
       }
       if (CODEX_SECTION_RE.test(trimmed)) {
@@ -361,7 +438,9 @@ async function runCodex(t, prompt, iteration, role = 'reviewer') {
         return; // 섹션 마커 자체는 표시하지 않음
       }
       if (skipUserEcho) return;
-      emit(t, 'codex', 'raw', cleaned);
+      if (isCodexStatusLine(trimmed) || isCodexHeaderLine(trimmed) || isCodexCommandLine(trimmed) || isLikelyCodexText(trimmed)) {
+        return;
+      }
     },
   });
 
@@ -449,6 +528,37 @@ function applyPlanUpdate(t, report, stepIndex) {
   emit(t, 'system', 'plan', `Claude가 남은 계획을 갱신했습니다 (총 ${t.plan.length}단계).`);
 }
 
+function extractReviewJson(text) {
+  if (typeof text !== 'string') return null;
+  const idx = text.lastIndexOf('REVIEW_JSON:');
+  if (idx === -1) return null;
+  const rest = text.slice(idx + 'REVIEW_JSON:'.length).trim();
+  const start = rest.indexOf('{');
+  const end = rest.lastIndexOf('}');
+  if (start === -1 || end === -1 || end < start) return null;
+  try {
+    const parsed = JSON.parse(rest.slice(start, end + 1));
+    if (!parsed || typeof parsed !== 'object') return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function reviewDecision(t, review) {
+  const json = extractReviewJson(review);
+  if (json) {
+    t.reviewJson = json;
+    saveState(t);
+  }
+  const verdict = json && typeof json.verdict === 'string' ? json.verdict : '';
+  return {
+    json,
+    approved: /^APPROVED$/i.test(verdict) || /^\s*VERDICT:\s*APPROVED/im.test(review),
+    changesRequested: /^CHANGES_REQUESTED$/i.test(verdict) || /^\s*VERDICT:\s*CHANGES_REQUESTED/im.test(review),
+  };
+}
+
 /* ──────────────────────────── 오케스트레이션 루프 ──────────────────────────── */
 
 /** 모드에 따라 적절한 러너로 위임한다. */
@@ -462,7 +572,7 @@ async function runTask(t) {
 async function runTaskMicro(t) {
   setStatus(t, 'running');
   emit(t, 'system', 'info',
-    `작업 시작 [micro] — 대상 디렉터리: ${t.cwd} (스텝당 최대 ${t.maxIterations}회 반복, 구현 ${implLabel(t)} / 리뷰 ${revLabel(t)})`);
+    `작업 시작 [micro] — 대상 디렉터리: ${t.cwd} (스텝당 최소 ${t.minIterations || 1}회, 최대 ${t.maxIterations}회 반복, 구현 ${implLabel(t)} / 리뷰 ${revLabel(t)})`);
 
   try {
     // ── [1] PLAN: 요구사항을 스텝으로 분해 ──────────────────────────────
@@ -507,11 +617,15 @@ async function runTaskMicro(t) {
         const review = await runReviewer(t, reviewStepPrompt(t, step, report, t.plan, s, total, i), `${s + 1}-${i}`);
         if (t.stopRequested) break;
 
-        if (/^\s*VERDICT:\s*APPROVED/im.test(review)) {
+        const decision = reviewDecision(t, review);
+        const approvedThisRound = decision.approved;
+        if (approvedThisRound && i >= (t.minIterations || 1)) {
           approved = true;
           break;
         }
-        feedback = review;
+        feedback = approvedThisRound
+          ? earlyApprovalFeedback(t, review, `step ${s + 1}/${total} ("${step.title}")`)
+          : review;
         emit(t, 'system', 'info', `${revLabel(t)}가 단계 ${s + 1} 수정을 요청했습니다 → 다음 반복으로 진행`);
       }
 
@@ -548,11 +662,17 @@ function finishStopped(t) {
   setStatus(t, 'stopped');
 }
 
+function earlyApprovalFeedback(t, review, scope = 'the current requirement') {
+  return `${review}
+
+The reviewer approved this round, but this task is configured for at least ${t.minIterations || 1} improvement rounds before final approval. Continue with one narrowly scoped, high-value improvement for ${scope}. Prefer reducing real risk, improving maintainability, strengthening tests, removing duplication, or clarifying types. Avoid broad rewrites, cosmetic churn, and unrelated features.`;
+}
+
 /* ── single 모드: 기존 단일 루프(요구사항 전체를 한 덩어리로 구현-리뷰) ── */
 async function runTaskSingle(t) {
   setStatus(t, 'running');
   emit(t, 'system', 'info',
-    `작업 시작 [single] — 대상 디렉터리: ${t.cwd} (최대 ${t.maxIterations}회 반복, 구현 ${implLabel(t)} / 리뷰 ${revLabel(t)})`);
+    `작업 시작 [single] — 대상 디렉터리: ${t.cwd} (최소 ${t.minIterations || 1}회, 최대 ${t.maxIterations}회 반복, 구현 ${implLabel(t)} / 리뷰 ${revLabel(t)})`);
 
   try {
     let feedback = null;
@@ -570,12 +690,14 @@ async function runTaskSingle(t) {
       const review = await runReviewer(t, reviewPrompt(t, report, i), i);
       if (t.stopRequested) break;
 
-      if (/^\s*VERDICT:\s*APPROVED/im.test(review)) {
+      const decision = reviewDecision(t, review);
+      const approvedThisRound = decision.approved;
+      if (approvedThisRound && i >= (t.minIterations || 1)) {
         emit(t, 'system', 'info', `✓ ${revLabel(t)} 승인 — 추가 요구사항 없음. ${i}회 반복 만에 완료.`);
         setStatus(t, 'approved');
         return;
       }
-      feedback = review;
+      feedback = approvedThisRound ? earlyApprovalFeedback(t, review) : review;
       emit(t, 'system', 'info', `${revLabel(t)}가 수정을 요청했습니다 → 다음 반복으로 진행`);
     }
 
@@ -602,7 +724,7 @@ async function runTaskSingle(t) {
 async function runTaskReview(t) {
   setStatus(t, 'running');
   emit(t, 'system', 'info',
-    `작업 시작 [review] — 대상 디렉터리: ${t.cwd} (최대 ${t.maxIterations}회 반복, ${revLabel(t)} 선리뷰 / ${implLabel(t)} 수정)`);
+    `작업 시작 [review] — 대상 디렉터리: ${t.cwd} (최소 ${t.minIterations || 1}회, 최대 ${t.maxIterations}회 반복, ${revLabel(t)} 선리뷰 / ${implLabel(t)} 수정)`);
 
   try {
     let report = null; // 직전 구현자 수정 보고 — 2회차부터의 재리뷰에 전달
@@ -613,10 +735,12 @@ async function runTaskReview(t) {
       saveMeta(t);
 
       emit(t, 'system', 'phase', `반복 ${i}/${t.maxIterations} — ${revLabel(t)} 리뷰 중`);
-      const review = await runReviewer(t, i === 1 ? reviewFirstPrompt(t) : reviewPrompt(t, report, i), i);
+      const review = await runReviewer(t, i === 1 ? reviewFirstPrompt(t, i) : reviewPrompt(t, report, i), i);
       if (t.stopRequested) break;
 
-      if (/^\s*VERDICT:\s*APPROVED/im.test(review)) {
+      const decision = reviewDecision(t, review);
+      const approvedThisRound = decision.approved;
+      if (approvedThisRound && i >= (t.minIterations || 1)) {
         emit(t, 'system', 'info', i === 1
           ? `✓ ${revLabel(t)} 승인 — 리뷰 지적사항이 없습니다.`
           : `✓ ${revLabel(t)} 승인 — 모든 지적사항이 해결되었습니다. ${i}회 반복 만에 완료.`);
@@ -626,7 +750,7 @@ async function runTaskReview(t) {
       if (i === t.maxIterations) break; // 마지막 리뷰가 미승인 → 아래에서 max_iterations 처리
 
       emit(t, 'system', 'phase', `반복 ${i}/${t.maxIterations} — ${implLabel(t)} 수정 중`);
-      report = await runImplementer(t, fixPrompt(t, review), `fix-${i}`);
+      report = await runImplementer(t, fixPrompt(t, approvedThisRound ? earlyApprovalFeedback(t, review) : review), `fix-${i}`);
       if (t.stopRequested) break;
       emit(t, 'system', 'info', `${implLabel(t)}가 지적사항을 처리했습니다 → ${revLabel(t)} 재리뷰로 진행`);
     }
@@ -663,13 +787,15 @@ function pump() {
  * 입력값 검증은 호출자(HTTP 서버)가 담당한다.
  * parent가 있으면 후속 작업: 부모의 Claude 세션을 물려받아 맥락을 이어간다.
  */
-function enqueueTask({ requirement, cwd, maxIterations, codexSandbox, mode, implementer, reviewer, parent }) {
+function enqueueTask({ requirement, acceptanceCriteria, cwd, maxIterations, minIterations, codexSandbox, mode, implementer, reviewer, parent }) {
   const id = newId();
   const impl = ENGINES.includes(implementer) ? implementer : 'claude';
   // Claude 세션은 구현자가 Claude일 때만 의미가 있다 — 다른 엔진이면 상속하지 않음
   const inheritSession = !!(parent && parent.claudeSessionId && impl === 'claude');
   const t = {
     id, requirement, cwd, maxIterations, // maxIterations = 스텝당 최대 구현-리뷰 횟수
+    acceptanceCriteria: Array.isArray(acceptanceCriteria) ? acceptanceCriteria : [],
+    minIterations: Math.min(Math.max(1, Number(minIterations) || 1), maxIterations),
     codexSandbox: codexSandbox || 'bypass',
     mode: MODES.includes(mode) ? mode : DEFAULT_MODE,
     implementer: impl,
@@ -686,9 +812,16 @@ function enqueueTask({ requirement, cwd, maxIterations, codexSandbox, mode, impl
     claudeSessionId: inheritSession ? parent.claudeSessionId : null,
     inheritedSession: inheritSession,
     claudeOk: false,
+    branchName: `duet/${id}`,
+    commits: [],
+    verificationCommands: detectVerificationCommands(cwd),
+    safetyPolicy: defaultSafetyPolicy(),
+    finalAudit: null,
+    reviewJson: null,
   };
   fs.mkdirSync(t.dir, { recursive: true });
   saveMeta(t);
+  saveState(t);
   tasks.set(id, t);
   queue.push(t);
   pump();

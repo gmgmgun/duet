@@ -43,7 +43,7 @@ export function TaskList({ tasks, selected, onSelect }: TaskListProps) {
               {(t.implementer || 'claude') + '→' + (t.reviewer || 'codex')}
             </span>
             <span>
-              iter {t.iteration}/{t.maxIterations}
+              iter {t.iteration}/{t.minIterations || 1}/{t.maxIterations}
             </span>
             <span>
               {new Date(t.createdAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}

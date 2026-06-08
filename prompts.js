@@ -40,6 +40,28 @@ function followupReviewNote(t) {
 `;
 }
 
+function acceptanceCriteriaNote(t) {
+  const criteria = Array.isArray(t.acceptanceCriteria) ? t.acceptanceCriteria.filter(Boolean) : [];
+  if (!criteria.length) return '';
+  return `Acceptance criteria:
+${criteria.map((c, i) => `${i + 1}. ${c}`).join('\n')}
+
+Treat these criteria as the primary completion contract. Do not approve until every applicable criterion is satisfied.
+
+`;
+}
+
+function verificationCommandsNote(t) {
+  const commands = Array.isArray(t.verificationCommands) ? t.verificationCommands.filter(Boolean) : [];
+  if (!commands.length) return '';
+  return `Suggested verification commands detected by the orchestrator:
+${commands.map((c) => `- ${c}`).join('\n')}
+
+Run the relevant commands when you verify unless there is a clear reason not to, and report any command you skipped.
+
+`;
+}
+
 /* ──────────────────────────── 분해(Plan) ──────────────────────────── */
 
 function planPrompt(t) {
@@ -50,6 +72,7 @@ ${followupImplementNote(t)}Task requirement:
 ${t.requirement}
 </requirement>
 
+${acceptanceCriteriaNote(t)}
 Guidelines for the plan:
 - Each step should be a small, self-contained unit that can be implemented and reviewed on its own (think "one small commit").
 - Order steps so each builds on the previous ones.
@@ -77,6 +100,7 @@ function stepHeader(t, step, plan, stepIndex, total) {
 ${t.requirement}
 </requirement>
 
+${acceptanceCriteriaNote(t)}
 Full plan (${total} steps):
 ${list}
 
@@ -134,6 +158,21 @@ function sandboxNote(t) {
     : 'Your sandbox is read-only: verify by reading the code (running it may be blocked by policy — do not treat blocked commands as implementation failures). Do not attempt to modify any files.';
 }
 
+function verdictRule(t, iteration) {
+  const min = Math.max(1, Number(t.minIterations) || 1);
+  if (iteration >= min) {
+    return `Your final message MUST start with exactly one of these lines:
+VERDICT: APPROVED
+VERDICT: CHANGES_REQUESTED`;
+  }
+  return `This task is configured for improvement rounds: minimum ${min} review iterations before final approval. This is review iteration ${iteration}, so you MUST NOT use VERDICT: APPROVED yet.
+
+Your final message MUST start with exactly this line:
+VERDICT: CHANGES_REQUESTED
+
+If you found correctness, security, or regression issues, list those first. If the implementation already satisfies the original requirement, request exactly ONE narrowly scoped, high-value improvement for the next round. Prefer improvements that reduce real risk, improve maintainability, strengthen tests, remove duplication, or clarify types. Do not ask for broad rewrites, cosmetic churn, or unrelated features.`;
+}
+
 function reviewStepPrompt(t, step, report, plan, stepIndex, total, iteration) {
   return `You are the REVIEWER in an automated pair-programming loop. The IMPLEMENTER just finished attempt ${iteration} on step ${stepIndex + 1}/${total} of the plan.
 
@@ -151,13 +190,18 @@ ${report}
 </report>
 
 Do NOT trust the report — inspect the actual files in the working directory and verify that this step is fully and correctly implemented, and that the code quality is acceptable (correctness first; style nitpicks only if serious).
+${acceptanceCriteriaNote(t)}${verificationCommandsNote(t)}
 ${sandboxNote(t)}
 
-Your final message MUST start with exactly one of these lines:
-VERDICT: APPROVED
-VERDICT: CHANGES_REQUESTED
+${verdictRule(t, iteration)}
 
-If CHANGES_REQUESTED, follow the verdict line with a concrete, numbered list of issues for THIS step, each actionable for the implementer. Only approve when you have NO further requirements for this step. Always respond in Korean (한국어), regardless of the language of the requirement.`;
+If CHANGES_REQUESTED, follow the verdict line with a concrete, numbered list of issues for THIS step, each actionable for the implementer. Only approve when you have NO further requirements for this step.
+
+End your response with this exact marker followed by valid JSON:
+REVIEW_JSON:
+{"verdict":"APPROVED|CHANGES_REQUESTED","criteria":[{"id":"criterion or inferred check","status":"pass|fail|unknown","evidence":"short evidence"}],"requiredChanges":["actionable change"],"verification":["command and result"],"riskLevel":"low|medium|high"}
+
+Always respond in Korean (한국어), regardless of the language of the requirement.`;
 }
 
 /* ──────────────────────────── 단일 루프(single 모드) ────────────────────────────
@@ -172,7 +216,9 @@ ${followupImplementNote(t)}Task requirement:
 ${t.requirement}
 </requirement>
 
+${acceptanceCriteriaNote(t)}
 Implement this requirement in the current working directory. Write real, working code — create files, run commands, and verify your work where possible.
+${verificationCommandsNote(t)}
 ${NO_BACKGROUND_NOTE}
 
 When you are done, end with a concise summary of WHAT you implemented, WHICH files you touched, and HOW to run/verify it. Always respond in Korean (한국어), regardless of the language of the requirement.`;
@@ -206,20 +252,25 @@ ${report}
 </report>
 
 Do NOT trust the report — inspect the actual files in the working directory and verify that the requirement is fully and correctly implemented, and that the code quality is acceptable (correctness first; style nitpicks only if serious).
+${acceptanceCriteriaNote(t)}${verificationCommandsNote(t)}
 ${sandboxNote(t)}
 
-Your final message MUST start with exactly one of these lines:
-VERDICT: APPROVED
-VERDICT: CHANGES_REQUESTED
+${verdictRule(t, iteration)}
 
-If CHANGES_REQUESTED, follow the verdict line with a concrete, numbered list of issues or missing requirements, each actionable for the implementer. Only approve when you have NO further requirements. Always respond in Korean (한국어), regardless of the language of the requirement.`;
+If CHANGES_REQUESTED, follow the verdict line with a concrete, numbered list of issues or missing requirements, each actionable for the implementer. Only approve when you have NO further requirements.
+
+End your response with this exact marker followed by valid JSON:
+REVIEW_JSON:
+{"verdict":"APPROVED|CHANGES_REQUESTED","criteria":[{"id":"criterion or inferred check","status":"pass|fail|unknown","evidence":"short evidence"}],"requiredChanges":["actionable change"],"verification":["command and result"],"riskLevel":"low|medium|high"}
+
+Always respond in Korean (한국어), regardless of the language of the requirement.`;
 }
 
 /* ──────────────────────────── 선리뷰 루프(review 모드) ────────────────────────────
    Codex가 먼저 기존 코드를 리뷰하고, 지적사항이 있으면 Claude가 수정하는 역순 루프.
    리뷰/감사형 요구사항("이 코드 리뷰해줘", "보안 점검해줘")에 사용한다. */
 
-function reviewFirstPrompt(t) {
+function reviewFirstPrompt(t, iteration = 1) {
   return `You are the REVIEWER in an automated pair-programming loop. This is a REVIEW-FIRST task: you act before the implementer. Review the EXISTING code in the current working directory against the request below. If you raise issues, your partner, the IMPLEMENTER, will fix them and you will re-review.
 
 Review request:
@@ -227,14 +278,20 @@ Review request:
 ${t.requirement}
 </requirement>
 
+${acceptanceCriteriaNote(t)}
 ${followupReviewNote(t)}Inspect the actual files in the working directory. If the request names specific files, areas, or concerns, focus there; otherwise review for correctness first, then security and code quality (style nitpicks only if serious).
+${verificationCommandsNote(t)}
 ${sandboxNote(t)}
 
-Your final message MUST start with exactly one of these lines:
-VERDICT: APPROVED
-VERDICT: CHANGES_REQUESTED
+${verdictRule(t, iteration)}
 
-If CHANGES_REQUESTED, follow the verdict line with a concrete, numbered list of issues, each actionable for the implementer. Use APPROVED only when you have NO findings worth fixing. Always respond in Korean (한국어), regardless of the language of the requirement.`;
+If CHANGES_REQUESTED, follow the verdict line with a concrete, numbered list of issues, each actionable for the implementer. Use APPROVED only when you have NO findings worth fixing.
+
+End your response with this exact marker followed by valid JSON:
+REVIEW_JSON:
+{"verdict":"APPROVED|CHANGES_REQUESTED","criteria":[{"id":"criterion or inferred check","status":"pass|fail|unknown","evidence":"short evidence"}],"requiredChanges":["actionable change"],"verification":["command and result"],"riskLevel":"low|medium|high"}
+
+Always respond in Korean (한국어), regardless of the language of the requirement.`;
 }
 
 function fixPrompt(t, feedback) {

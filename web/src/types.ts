@@ -23,8 +23,10 @@ export interface TaskStep {
 export interface Task {
   id: string;
   requirement: string;
+  acceptanceCriteria: string[];
   cwd: string;
   maxIterations: number;
+  minIterations: number;
   codexSandbox: CodexSandbox;
   mode: TaskMode;
   implementer: Engine;
@@ -74,8 +76,10 @@ export interface FsListing {
 
 export interface NewTaskInput {
   requirement: string;
+  acceptanceCriteria: string[];
   cwd: string;
   maxIterations: number;
+  minIterations: number;
   codexSandbox: CodexSandbox;
   mode: TaskMode;
   implementer: Engine;

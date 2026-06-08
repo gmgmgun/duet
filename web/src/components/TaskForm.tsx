@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ApiError, createTask } from '../api';
-import type { CodexSandbox, Engine, TaskMode } from '../types';
+import type { Engine, TaskMode } from '../types';
 import { FsModal } from './FsModal';
 import { loadRecents, mergeRecents, PathInput, saveRecent } from './PathInput';
 import { Stepper } from './Stepper';
@@ -16,6 +16,7 @@ const CWD_KEY = 'duet-cwd';
 
 export function TaskForm({ onCreated, cwdSuggestions }: TaskFormProps) {
   const [req, setReq] = useState('');
+  const [criteria, setCriteria] = useState('');
   // 새로고침해도 입력 중이던 경로 유지 — 저장된 값이 없으면 마지막 사용 경로로 시작
   const [cwd, setCwd] = useState(() => {
     try {
@@ -31,11 +32,11 @@ export function TaskForm({ onCreated, cwdSuggestions }: TaskFormProps) {
       /* ignore */
     }
   }, [cwd]);
+  const [minIter, setMinIter] = useState('1');
   const [maxIter, setMaxIter] = useState('8');
   const [mode, setMode] = useState<TaskMode>('single');
   const [implementer, setImplementer] = useState<Engine>('claude');
   const [reviewer, setReviewer] = useState<Engine>('codex');
-  const [codexSandbox, setCodexSandbox] = useState<CodexSandbox>('bypass');
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
   const [browsing, setBrowsing] = useState(false);
@@ -46,15 +47,18 @@ export function TaskForm({ onCreated, cwdSuggestions }: TaskFormProps) {
     try {
       const t = await createTask({
         requirement: req.trim(),
+        acceptanceCriteria: criteria.split(/\r?\n/).map((s) => s.trim()).filter(Boolean),
         cwd: cwd.trim(),
+        minIterations: Number(minIter) || 1,
         maxIterations: Number(maxIter) || 8,
-        codexSandbox,
+        codexSandbox: 'bypass',
         mode,
         implementer,
         reviewer,
       });
       saveRecent(cwd.trim()); // 서버 검증을 통과한 경로만 최근 목록에 저장
       setReq('');
+      setCriteria('');
       onCreated(t.id);
     } catch (e) {
       setErr(e instanceof ApiError ? e.message : '서버에 연결할 수 없습니다.');
@@ -73,6 +77,14 @@ export function TaskForm({ onCreated, cwdSuggestions }: TaskFormProps) {
         placeholder="예: 이 폴더에 할 일 관리 CLI를 파이썬으로 만들어줘. 추가/완료/목록 기능 포함."
         value={req}
         onChange={(e) => setReq(e.target.value)}
+      />
+
+      <label className={labelCls}>완료 기준 (선택, 줄마다 1개)</label>
+      <textarea
+        className={`${inputCls} min-h-20 resize-y leading-[1.55]`}
+        placeholder="예: 기존 테스트 통과&#10;잘못된 입력은 오류 메시지 출력&#10;README에 실행 방법 포함"
+        value={criteria}
+        onChange={(e) => setCriteria(e.target.value)}
       />
 
       {/* 경로는 전용 행 전체를 사용 — 긴 절대 경로 가독성 확보 */}
@@ -110,10 +122,19 @@ export function TaskForm({ onCreated, cwdSuggestions }: TaskFormProps) {
         </div>
       </div>
 
-      <div className="grid grid-cols-[96px_1fr_1fr] gap-[10px]">
+      <div className="grid grid-cols-[96px_96px_1fr] gap-[10px]">
+        <div>
+          <label className={labelCls}>최소 반복</label>
+          <Stepper value={minIter} min={1} max={Number(maxIter) || 30} onChange={setMinIter} />
+        </div>
         <div>
           <label className={labelCls}>최대 반복</label>
-          <Stepper value={maxIter} min={1} max={30} onChange={setMaxIter} />
+          <Stepper
+            value={maxIter}
+            min={Math.max(1, Number(minIter) || 1)}
+            max={30}
+            onChange={setMaxIter}
+          />
         </div>
         <div>
           <label className={labelCls}>진행 모드</label>
@@ -125,23 +146,6 @@ export function TaskForm({ onCreated, cwdSuggestions }: TaskFormProps) {
             <option value="single">single</option>
             <option value="micro">micro</option>
             <option value="review">review</option>
-          </select>
-        </div>
-        <div>
-          <label
-            className={labelCls}
-            title="리뷰어 권한 — Codex: 샌드박스 모드 / Claude: 읽기 전용 선택 시 셸 실행까지 차단 (파일 변경 도구는 항상 차단)"
-          >
-            리뷰어 권한
-          </label>
-          <select
-            className={`${inputCls} cursor-pointer`}
-            value={codexSandbox}
-            onChange={(e) => setCodexSandbox(e.target.value as CodexSandbox)}
-          >
-            <option value="bypass">전체 bypass</option>
-            <option value="workspace-write">쓰기 허용</option>
-            <option value="read-only">읽기 전용</option>
           </select>
         </div>
       </div>

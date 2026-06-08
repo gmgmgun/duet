@@ -54,6 +54,16 @@ const MIME = {
   '.txt': 'text/plain; charset=utf-8',
 };
 
+function normalizeCriteria(value) {
+  const source = Array.isArray(value)
+    ? value
+    : String(value || '').split(/\r?\n/);
+  return source
+    .map((v) => String(v || '').trim())
+    .filter(Boolean)
+    .slice(0, 30);
+}
+
 /* ─────────────────────── CSRF / 원격지 방어 ─────────────────────── */
 
 // 서버 프로세스 수명 동안 유지되는 세션 CSRF 토큰.
@@ -211,8 +221,10 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && p === '/api/tasks') {
       const body = await readBody(req);
       const requirement = String(body.requirement || '').trim();
+      const acceptanceCriteria = normalizeCriteria(body.acceptanceCriteria);
       const cwd = String(body.cwd || '').trim();
       const maxIterations = Math.max(1, Math.min(30, Number(body.maxIterations) || DEFAULT_MAX_ITERATIONS));
+      const minIterations = Math.max(1, Math.min(maxIterations, Number(body.minIterations) || 1));
       const codexSandbox = ['read-only', 'workspace-write', 'bypass'].includes(body.codexSandbox)
         ? body.codexSandbox : 'bypass';
       const mode = MODES.includes(body.mode) ? body.mode : DEFAULT_MODE;
@@ -226,7 +238,7 @@ const server = http.createServer(async (req, res) => {
       try { stat = fs.statSync(cwd); } catch { /* noop */ }
       if (!stat || !stat.isDirectory()) return json(res, 400, { error: `대상 디렉터리가 존재하지 않습니다: ${cwd}` });
 
-      const t = enqueueTask({ requirement, cwd, maxIterations, codexSandbox, mode, implementer, reviewer });
+      const t = enqueueTask({ requirement, acceptanceCriteria, cwd, maxIterations, minIterations, codexSandbox, mode, implementer, reviewer });
       json(res, 201, taskSummary(t));
       return;
     }
@@ -273,18 +285,23 @@ const server = http.createServer(async (req, res) => {
         }
         const body = await readBody(req);
         const requirement = String(body.requirement || '').trim();
+        const acceptanceCriteria = normalizeCriteria(body.acceptanceCriteria);
         if (!requirement) return json(res, 400, { error: '요구사항(requirement)을 입력하세요.' });
         let stat;
         try { stat = fs.statSync(t.cwd); } catch { /* noop */ }
         if (!stat || !stat.isDirectory()) {
           return json(res, 400, { error: `대상 디렉터리가 존재하지 않습니다: ${t.cwd}` });
         }
+        const maxIterations = Math.max(1, Math.min(30, Number(body.maxIterations) || t.maxIterations || DEFAULT_MAX_ITERATIONS));
+        const minIterations = Math.max(1, Math.min(maxIterations, Number(body.minIterations) || t.minIterations || 1));
         const nt = enqueueTask({
           requirement,
+          acceptanceCriteria,
           cwd: t.cwd,
-          maxIterations: Math.max(1, Math.min(30, Number(body.maxIterations) || t.maxIterations || DEFAULT_MAX_ITERATIONS)),
+          maxIterations,
+          minIterations,
           codexSandbox: ['read-only', 'workspace-write', 'bypass'].includes(body.codexSandbox)
-            ? body.codexSandbox : (t.codexSandbox || 'bypass'),
+            ? body.codexSandbox : 'bypass',
           mode: MODES.includes(body.mode) ? body.mode : (t.mode || DEFAULT_MODE),
           implementer: ENGINES.includes(body.implementer) ? body.implementer : (t.implementer || 'claude'),
           reviewer: ENGINES.includes(body.reviewer) ? body.reviewer : (t.reviewer || 'codex'),

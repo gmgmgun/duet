@@ -78,13 +78,13 @@ function StepProgress({ t }: { t: Task }) {
       <>
         STEP <b className="text-fg">{cur}</b>/{t.steps.length}
         <span className="tracking-[2px] text-ok mx-1">{dots}</span>· ITER{' '}
-        <b className="text-fg">{t.iteration}</b>
+        <b className="text-fg">{t.iteration}</b>/{t.minIterations || 1}/{t.maxIterations}
       </>
     );
   }
   return (
     <>
-      ITER <b className="text-fg">{t.iteration}</b>/{t.maxIterations}
+      ITER <b className="text-fg">{t.iteration}</b>/{t.minIterations || 1}/{t.maxIterations}
     </>
   );
 }
