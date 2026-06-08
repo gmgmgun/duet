@@ -7,7 +7,7 @@ Codex의 **추가 요구사항이 없어질 때까지(`VERDICT: APPROVED`)** 자
 요구사항 입력
     │
     ▼
-┌──────────────┐                  ┌──────────────┐
+┌──────────────┐                   ┌──────────────┐
      CLAUDE        구현 결과 보고        CODEX
   IMPLEMENTER    ────────────────▶    REVIEWER
    WRITE CODE   ◀────────────────   VERIFY CODE
